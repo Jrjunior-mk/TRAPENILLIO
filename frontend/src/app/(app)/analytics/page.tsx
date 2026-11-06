@@ -125,6 +125,7 @@ function Legend() {
 
 function LiveSection() {
   const kpi = useLive((s) => s.kpi);
+  const hasKpi = !!kpi;
   const q = useApi<{ series: Record<string, number | string | null>[] }>("/live/series", 5000);
   const series = useMemo(() => q.data?.series ?? [], [q.data]);
   const [samples, setSamples] = useState<Record<string, number | string>[]>([]);
@@ -142,7 +143,7 @@ function LiveSection() {
     take();
     const id = setInterval(take, 5000);
     return () => clearInterval(id);
-  }, []);
+  }, [hasKpi]); // the first stream message usually arrives after mount, so sample as soon as it does
   const stations = (kpi?.stations ?? []).filter((s) => s.kind !== "origin").map((s) => ({ name: siteName(s.id), util: Math.round(s.bay_utilization * 1000) / 10 }));
 
   const chart = (node: ReactNode) => (!q.data ? (q.error ? <ErrorBox text={q.error} /> : <Loading />) : series.length ? node : <Empty text="No samples yet for today." />);

@@ -37,6 +37,8 @@ export interface LiveAlert {
 interface LiveState {
   connected: boolean;
   kpi: Kpi | null;
+  /** True once a connection has failed or dropped. Before that, a closed socket only means it is still connecting. */
+  lost: boolean;
   events: LiveEvent[];
   alerts: LiveAlert[];
   unread: number;
@@ -49,6 +51,7 @@ const frameRef: LiveState["frameRef"] = { current: null, prev: null, at: 0 };
 
 export const useLive = create<LiveState>((set) => ({
   connected: false,
+  lost: false,
   kpi: null,
   events: [],
   alerts: [],
@@ -87,8 +90,12 @@ export async function connectLive() {
   let url: string | null = null;
   try {
     url = await liveUrl();
-    if (!url) return; // no live stream configured: stay disconnected, which the UI reports
+    if (!url) {
+      useLive.setState({ lost: true }); // no live stream is configured for this site
+      return;
+    }
   } catch {
+    useLive.setState({ lost: true });
     scheduleReconnect();
     return;
   } finally {
@@ -97,10 +104,10 @@ export async function connectLive() {
   if (!wanted || socket) return;
   const ws = new WebSocket(url);
   socket = ws;
-  ws.onopen = () => useLive.setState({ connected: true });
+  ws.onopen = () => useLive.setState({ connected: true, lost: false });
   ws.onclose = () => {
     socket = null;
-    useLive.setState({ connected: false });
+    useLive.setState({ connected: false, lost: true });
     scheduleReconnect();
   };
   ws.onerror = () => ws.close();

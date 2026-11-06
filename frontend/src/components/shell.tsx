@@ -143,9 +143,10 @@ function Notifications() {
 function HealthIndicator() {
   const kpi = useLive((s) => s.kpi);
   const connected = useLive((s) => s.connected);
+  const lost = useLive((s) => s.lost);
   const faults = kpi ? kpi.stations.filter((s) => !s.online || !s.edge_up || s.faults > 0).length + (kpi.system.registry_down ? 1 : 0) : 0;
-  const state = !connected ? "stop" : faults > 2 ? "stop" : faults > 0 ? "wait" : "go";
-  const text = !connected ? "Stream lost" : faults ? `${faults} degraded` : "Nominal";
+  const state = !connected ? (lost ? "stop" : "wait") : faults > 2 ? "stop" : faults > 0 ? "wait" : "go";
+  const text = !connected ? (lost ? "Stream lost" : "Connecting") : faults ? `${faults} degraded` : "Nominal";
   const I = connected ? Wifi : WifiOff;
   return (
     <Link href="/sensors" title="System health" className={clsx("flex items-center gap-1.5 h-7 px-2 rounded-sm border text-[11px]", state === "go" && "border-go/40 text-go", state === "wait" && "border-wait/40 text-wait", state === "stop" && "border-stop/40 text-stop")}>
@@ -173,7 +174,7 @@ function Topbar() {
         {parts.map((p, i) => (
           <span key={i} className="flex items-center gap-1 min-w-0">
             <ChevronRight size={12} className="text-ink-3 shrink-0" />
-            {i < parts.length - 1 ? <Link href={"/" + parts.slice(0, i + 1).join("/")} className="text-ink-3 hover:text-ink">{CRUMBS[p] || decodeURIComponent(p)}</Link> : <span className="text-ink truncate">{CRUMBS[p] || decodeURIComponent(p)}</span>}
+            {i < parts.length - 1 && p !== "trucks" ? <Link href={"/" + parts.slice(0, i + 1).join("/")} className="text-ink-3 hover:text-ink">{CRUMBS[p] || decodeURIComponent(p)}</Link> : <span className="text-ink truncate">{CRUMBS[p] || decodeURIComponent(p)}</span>}
           </span>
         ))}
       </nav>
@@ -181,7 +182,7 @@ function Topbar() {
         <GlobalSearch />
         <div className="flex items-center gap-1.5 h-7 px-2 rounded-sm border border-wait/40 text-wait text-[11px] font-medium" title="Simulated demonstration. No real infrastructure feed or agency system is connected.">
           <Radio size={12} className={kpi?.running ? "pulse-dot" : ""} />
-          DEMO {kpi?.running ? "LIVE SIM" : "PAUSED"}
+          DEMO{kpi ? (kpi.running ? " LIVE SIM" : " PAUSED") : ""}
         </div>
         <HealthIndicator />
         <div className="text-right leading-tight max-sm:hidden" title="Simulated corridor clock, East Africa Time">
