@@ -4,6 +4,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -25,6 +26,17 @@ class Settings(BaseSettings):
     live_prewarm_hours: float = 3.0
     worker_processes: int = 2
     seed_demo: bool = True
+    # Password for the seeded accounts. Required in production, where the published demo password is refused.
+    seed_password: str = ""
+
+    @field_validator("database_url")
+    @classmethod
+    def use_psycopg_driver(cls, url: str) -> str:
+        # Hosts hand out plain postgres URLs, which SQLAlchemy would resolve to a driver that is not installed.
+        for prefix in ("postgresql://", "postgres://"):
+            if url.startswith(prefix):
+                return "postgresql+psycopg://" + url[len(prefix):]
+        return url
 
 
 @lru_cache

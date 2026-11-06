@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .config import get_settings
 from .domain.tokens import b64u, new_keypair
 from .models import CalibrationRecord, Dispute, Fleet, SettingRow, Site, User, Vehicle
 from .security import decrypt_bytes, encrypt_bytes, encrypt_field, hash_password
@@ -33,12 +34,19 @@ def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def seed_password() -> str:
+    s = get_settings()
+    if s.env == "production" and s.seed_password in ("", DEMO_PASSWORD):
+        raise RuntimeError("RCS_SEED_PASSWORD must be set to a private value in production: the demo password is public.")
+    return s.seed_password or DEMO_PASSWORD
+
+
 def seed_all(db: Session, vehicle_count: int = 800) -> bool:
     if db.scalar(select(User).limit(1)):
         return False
     now = now_utc()
     rng = random.Random(2026)
-    pw = hash_password(DEMO_PASSWORD)
+    pw = hash_password(seed_password())
     for username, name, role, org, fleet, site in DEMO_USERS:
         db.add(User(username=username, display_name=name, role=role, org=org, fleet_id=fleet, site_id=site, password_hash=pw, created_at=now))
     for geom in PLAZA_DEFS:

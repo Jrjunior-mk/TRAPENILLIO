@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .api import ops, portals, simulation, twin
 from .config import BASE_DIR, get_settings
 from .db import get_engine, session_factory, write_behind
-from .seed import DEMO_PASSWORD, seed_all
+from .seed import seed_all
 from .state import state
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -35,7 +35,7 @@ def bootstrap() -> None:
     if settings.seed_demo:
         with session_factory()() as db:
             if seed_all(db):
-                log.info("Seeded demonstration data. Demo password: %s", DEMO_PASSWORD)
+                log.info("Seeded demonstration data.")
     write_behind.start()
     engine = state.init_engine()
     engine.bus.connect_bridge(settings.mqtt_url)

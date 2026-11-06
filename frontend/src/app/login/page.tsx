@@ -15,9 +15,11 @@ const DEMO = [
   ["viewer", "Observer"],
 ];
 const PW = "rcs-demo-2026";
+// A public deployment uses private passwords, so the one-click roles would only fail there.
+const SHOW_DEMO_ROLES = !process.env.NEXT_PUBLIC_HIDE_DEMO_LOGINS;
 
 export default function LoginPage() {
-  const [username, setUsername] = useState("admin");
+  const [username, setUsername] = useState(SHOW_DEMO_ROLES ? "admin" : "");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -56,7 +58,7 @@ export default function LoginPage() {
             {error && <ErrorBox text={error} />}
             <Button variant="primary" className="w-full" loading={busy} type="submit">Sign in</Button>
           </form>
-          <div className="mt-5">
+          {SHOW_DEMO_ROLES && <div className="mt-5">
             <div className="eyebrow mb-1.5">Demo roles (password {PW})</div>
             <div className="grid grid-cols-2 gap-1">
               {DEMO.map(([u, label]) => (
@@ -66,7 +68,7 @@ export default function LoginPage() {
                 </button>
               ))}
             </div>
-          </div>
+          </div>}
         </div>
       </div>
     </div>

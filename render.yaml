@@ -1,0 +1,37 @@
+# Backend for the Vercel-hosted frontend. Free plans: the service sleeps after 15 idle minutes and the database
+# expires 30 days after creation unless upgraded. RCS_SEED_PASSWORD is generated here and visible only in the
+# Render dashboard, under the service's Environment tab.
+services:
+  - type: web
+    name: trapenillio-api
+    runtime: python
+    plan: free
+    region: frankfurt
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn rcs.main:app --host 0.0.0.0 --port $PORT --timeout-keep-alive 120
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: RCS_ENV
+        value: production
+      - key: RCS_DATABASE_URL
+        fromDatabase:
+          name: trapenillio-db
+          property: connectionString
+      - key: RCS_MASTER_KEY
+        generateValue: true
+      - key: RCS_SEED_PASSWORD
+        generateValue: true
+      - key: RCS_COOKIE_SECURE
+        value: "true"
+      - key: RCS_LIVE_PREWARM_HOURS
+        value: "1"
+      - key: RCS_WORKER_PROCESSES
+        value: "1"
+
+databases:
+  - name: trapenillio-db
+    plan: free
+    region: frankfurt

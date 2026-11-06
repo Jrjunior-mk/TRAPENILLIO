@@ -203,12 +203,17 @@ function Topbar() {
 }
 
 function BackendOffline() {
+  const { refresh } = useAuth();
+  useEffect(() => {
+    const id = setInterval(refresh, 10000);
+    return () => clearInterval(id);
+  }, [refresh]);
   return (
     <main className="h-screen flex items-center justify-center app-bg p-4">
       <div className="max-w-md border border-line rounded-sm bg-bg-2/80 p-5">
         <h1 className="text-[15px] font-semibold text-ink">The API server is not connected</h1>
         <p className="text-[13px] text-ink-3 mt-2">
-          Sign-in, the simulation and the live stream all run on the API server, and this site cannot reach it. No data can be shown until it is online.
+          Sign-in, the simulation and the live stream all run on the API server, and this site cannot reach it. No data can be shown until it is online. A server that has been idle can take about a minute to wake, and this page reconnects by itself.
         </p>
         <button onClick={() => window.location.reload()} className="mt-4 h-8 px-3 rounded-sm border border-line text-[12px] text-ink hover:bg-panel-2 cursor-pointer">Try again</button>
       </div>

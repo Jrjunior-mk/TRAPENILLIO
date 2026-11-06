@@ -74,12 +74,14 @@ pytest
 Vercel can host the frontend only. The backend runs a continuous simulation engine, a WebSocket stream and worker processes,
 so it needs an always-on host with durable storage. The Docker image in `backend/` is the intended starting point, though Docker has not been run yet.
 
-1. Host the backend with HTTPS and set `RCS_COOKIE_SECURE=true`, a real `RCS_MASTER_KEY` and a PostgreSQL `RCS_DATABASE_URL`.
+1. Host the backend with HTTPS. `render.yaml` does this on Render, generating `RCS_MASTER_KEY` and `RCS_SEED_PASSWORD`. Elsewhere, set those two
+   plus `RCS_ENV=production`, `RCS_COOKIE_SECURE=true` and a PostgreSQL `RCS_DATABASE_URL`.
 2. In the Vercel project, with Root Directory `frontend`, set `API_ORIGIN=https://your-backend` and
-   `NEXT_PUBLIC_WS_URL=wss://your-backend/api/ws/live`.
+   `NEXT_PUBLIC_WS_URL=wss://your-backend/api/ws/live` and `NEXT_PUBLIC_HIDE_DEMO_LOGINS=1`.
 3. Redeploy, because Next.js reads both at build time.
 
-The seeded accounts share a password printed in this repository, so anyone who finds a public deployment can sign in, including as administrator. Replace those accounts or put access control in front first.
+In production the seeded accounts use `RCS_SEED_PASSWORD`, and the backend refuses to start seeding without a private value. The password
+is read when the accounts are first created, so changing it later does not change existing accounts.
 
 ## A ten-minute demonstration
 
