@@ -1,0 +1,14 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0
+alembic>=1.13
+pydantic>=2.8
+pydantic-settings>=2.4
+cryptography>=43
+numpy>=2.0
+scipy>=1.13
+pandas>=2.2
+simpy>=4.1
+reportlab>=4.2
+paho-mqtt>=2.1
+psycopg[binary]>=3.2

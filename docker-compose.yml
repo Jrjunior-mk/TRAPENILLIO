@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: rcs
+      POSTGRES_USER: rcs
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rcs-demo-only}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rcs -d rcs"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    volumes:
+      - ./infra/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    ports:
+      - "1883:1883"
+
+  backend:
+    build: ./backend
+    environment:
+      RCS_ENV: docker
+      RCS_DATABASE_URL: postgresql+psycopg://rcs:${POSTGRES_PASSWORD:-rcs-demo-only}@postgres:5432/rcs
+      RCS_MASTER_KEY: ${RCS_MASTER_KEY:-}
+      RCS_MQTT_URL: mqtt://mosquitto:1883
+      RCS_CORS_ORIGINS: http://localhost:3000
+      RCS_WORKER_PROCESSES: "2"
+    volumes:
+      - backend-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    environment:
+      API_ORIGIN: http://backend:8000
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
+  backend-data:
