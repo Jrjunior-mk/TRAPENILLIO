@@ -38,7 +38,9 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
     } catch {
       /* non-JSON error */
     }
-    throw new ApiError(res.status, detail(body, `Request failed (${res.status})`));
+    // Every API error is JSON, so anything else came from the proxy or host in front of it.
+    const fallback = body === null ? `The API server is not responding (${res.status}). Check that the backend is running and API_ORIGIN points to it.` : `Request failed (${res.status})`;
+    throw new ApiError(res.status, detail(body, fallback));
   }
   return res.json() as Promise<T>;
 }

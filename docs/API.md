@@ -28,7 +28,7 @@ Long jobs return `{job_id}`. Poll `GET /api/sim/experiments/{job_id}` for `statu
 
 ## WebSocket
 
-`ws://localhost:8000/api/ws/live`, authenticated by the session cookie. JSON messages:
+`ws://localhost:8000/api/ws/live`, authenticated by the session cookie, or by `?ticket=` from `POST /api/ws/ticket` (single use, 30 seconds) when the frontend is hosted on another site. JSON messages:
 
 | `t` | Rate | Content |
 |---|---|---|

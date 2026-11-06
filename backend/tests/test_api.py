@@ -12,6 +12,7 @@ os.environ["RCS_AUTOSTART_LIVE"] = "false"
 os.environ["RCS_WORKER_PROCESSES"] = "0"
 os.environ["RCS_MASTER_KEY"] = "dGVzdC1rZXktdGVzdC1rZXktdGVzdC1rZXktdGVzdC0="
 
+from fastapi import WebSocketDisconnect  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from rcs.db import write_behind  # noqa: E402
@@ -36,6 +37,19 @@ def login(anon, user):
 @pytest.fixture(scope="module")
 def admin(anon):
     return login(anon, "admin")
+
+
+def test_ws_ticket_is_required_and_single_use(anon, admin):
+    assert anon.post("/api/ws/ticket").status_code == 401
+    with pytest.raises(WebSocketDisconnect):
+        with anon.websocket_connect("/api/ws/live?ticket=not-a-ticket"):
+            pass
+    ticket = admin.post("/api/ws/ticket").json()["ticket"]
+    with anon.websocket_connect(f"/api/ws/live?ticket={ticket}") as ws:
+        assert ws.receive_json()["t"] == "kpi"
+    with pytest.raises(WebSocketDisconnect):
+        with anon.websocket_connect(f"/api/ws/live?ticket={ticket}"):
+            pass
 
 
 @pytest.fixture(scope="module")

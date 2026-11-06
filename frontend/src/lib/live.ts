@@ -59,18 +59,49 @@ export const useLive = create<LiveState>((set) => ({
 
 let socket: WebSocket | null = null;
 let retry: ReturnType<typeof setTimeout> | null = null;
+let wanted = false;
+let connecting = false;
 
-export function connectLive() {
-  if (typeof window === "undefined" || socket) return;
-  const url = process.env.NEXT_PUBLIC_WS_URL || `ws://${window.location.hostname}:8000/api/ws/live`;
+function scheduleReconnect() {
+  if (retry) clearTimeout(retry);
+  if (wanted) retry = setTimeout(connectLive, 1500);
+}
+
+/** A separately hosted API is on another site, so the socket authenticates with a one-time ticket instead of the cookie. */
+async function liveUrl(): Promise<string | null> {
+  const remote = process.env.NEXT_PUBLIC_WS_URL;
+  if (remote) {
+    const res = await fetch("/api/ws/ticket", { method: "POST", credentials: "include" });
+    if (!res.ok) throw new Error(`Live stream ticket failed (${res.status})`);
+    const { ticket } = await res.json();
+    return `${remote}?ticket=${encodeURIComponent(ticket)}`;
+  }
+  // Local and Docker runs. A page served over HTTPS cannot open ws://, and there is no API on port 8000 of a hosted domain.
+  return window.location.protocol === "http:" ? `ws://${window.location.hostname}:8000/api/ws/live` : null;
+}
+
+export async function connectLive() {
+  if (typeof window === "undefined" || socket || connecting) return;
+  wanted = true;
+  connecting = true;
+  let url: string | null = null;
+  try {
+    url = await liveUrl();
+    if (!url) return; // no live stream configured: stay disconnected, which the UI reports
+  } catch {
+    scheduleReconnect();
+    return;
+  } finally {
+    connecting = false;
+  }
+  if (!wanted || socket) return;
   const ws = new WebSocket(url);
   socket = ws;
   ws.onopen = () => useLive.setState({ connected: true });
   ws.onclose = () => {
     socket = null;
     useLive.setState({ connected: false });
-    if (retry) clearTimeout(retry);
-    retry = setTimeout(connectLive, 1500);
+    scheduleReconnect();
   };
   ws.onerror = () => ws.close();
   ws.onmessage = (msg) => {
@@ -90,6 +121,8 @@ export function connectLive() {
 }
 
 export function disconnectLive() {
+  wanted = false;
+  if (retry) clearTimeout(retry);
   socket?.close();
   socket = null;
 }

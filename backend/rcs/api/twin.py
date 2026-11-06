@@ -5,6 +5,8 @@ import asyncio
 import json
 import logging
 import random
+import secrets
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
@@ -304,12 +306,35 @@ class Hub:
 hub = Hub()
 
 
+# Browsers do not send the Lax session cookie to an API on another site, so a frontend hosted separately
+# trades its proxied session for a ticket. Tickets are single use, expire quickly and live in this process.
+WS_TICKET_SECONDS = 30
+_ws_tickets: dict[str, tuple[str, float]] = {}
+
+
+@router.post("/ws/ticket", tags=["twin"])
+def ws_ticket(user: User = Depends(current_user)):
+    now = time.monotonic()
+    for key, (_, expires) in list(_ws_tickets.items()):
+        if expires < now:
+            _ws_tickets.pop(key, None)
+    ticket = secrets.token_urlsafe(32)
+    _ws_tickets[ticket] = (user.id, now + WS_TICKET_SECONDS)
+    return {"ticket": ticket, "expires_in": WS_TICKET_SECONDS}
+
+
 @router.websocket("/ws/live")
 async def ws_live(ws: WebSocket):
-    token = ws.cookies.get(COOKIE)
     Session_ = session_factory()
+    ticket = ws.query_params.get("ticket")
     with Session_() as db:
-        user = user_from_token(db, token)
+        if ticket:
+            entry = _ws_tickets.pop(ticket, None)
+            user = db.get(User, entry[0]) if entry and entry[1] >= time.monotonic() else None
+            if user is not None and not user.active:
+                user = None
+        else:
+            user = user_from_token(db, ws.cookies.get(COOKIE))
     if user is None:
         await ws.close(code=4401)
         return

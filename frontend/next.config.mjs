@@ -1,4 +1,5 @@
-const api = process.env.API_ORIGIN || "http://127.0.0.1:8000";
+// A hosted build has no API on its own loopback address, so it only proxies when API_ORIGIN is set.
+const api = process.env.API_ORIGIN || (process.env.VERCEL ? "" : "http://127.0.0.1:8000");
 /** @type {import('next').NextConfig} */
 export default {
   output: "standalone",
@@ -6,6 +7,6 @@ export default {
   images: { unoptimized: true },
   typescript: { ignoreBuildErrors: false },
   async rewrites() {
-    return [{ source: "/api/:path*", destination: `${api}/api/:path*` }];
+    return api ? [{ source: "/api/:path*", destination: `${api}/api/:path*` }] : [];
   },
 };

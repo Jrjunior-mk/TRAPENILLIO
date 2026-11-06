@@ -69,6 +69,18 @@ cd backend
 pytest
 ```
 
+## Hosting
+
+Vercel can host the frontend only. The backend runs a continuous simulation engine, a WebSocket stream and worker processes,
+so it needs an always-on host with durable storage. The Docker image in `backend/` is the intended starting point, though Docker has not been run yet.
+
+1. Host the backend with HTTPS and set `RCS_COOKIE_SECURE=true`, a real `RCS_MASTER_KEY` and a PostgreSQL `RCS_DATABASE_URL`.
+2. In the Vercel project, with Root Directory `frontend`, set `API_ORIGIN=https://your-backend` and
+   `NEXT_PUBLIC_WS_URL=wss://your-backend/api/ws/live`.
+3. Redeploy, because Next.js reads both at build time.
+
+The seeded accounts share a password printed in this repository, so anyone who finds a public deployment can sign in, including as administrator. Replace those accounts or put access control in front first.
+
 ## A ten-minute demonstration
 
 1. **Command Centre**: KPIs from the running engine.
