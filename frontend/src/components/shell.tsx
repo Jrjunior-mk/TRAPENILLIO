@@ -201,6 +201,34 @@ function Topbar() {
   );
 }
 
+function BackendOffline() {
+  return (
+    <main className="h-screen flex items-center justify-center app-bg p-4">
+      <div className="max-w-md border border-line rounded-sm bg-bg-2/80 p-5">
+        <h1 className="text-[15px] font-semibold text-ink">The API server is not connected</h1>
+        <p className="text-[13px] text-ink-3 mt-2">
+          Sign-in, the simulation and the live stream all run on the API server, and this site cannot reach it. No data can be shown until it is online.
+        </p>
+        <button onClick={() => window.location.reload()} className="mt-4 h-8 px-3 rounded-sm border border-line text-[12px] text-ink hover:bg-panel-2 cursor-pointer">Try again</button>
+      </div>
+    </main>
+  );
+}
+
+function ShellFrame({ collapsed, onToggle, children }: { collapsed: boolean; onToggle: () => void; children: ReactNode }) {
+  const { offline } = useAuth();
+  if (offline) return <BackendOffline />;
+  return (
+    <div className="h-screen flex app-bg overflow-hidden">
+      <Sidebar collapsed={collapsed} onToggle={onToggle} />
+      <div className="flex-1 flex flex-col min-w-0">
+        <Topbar />
+        <main className="flex-1 min-h-0 overflow-auto">{children}</main>
+      </div>
+    </div>
+  );
+}
+
 export function Shell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
@@ -217,13 +245,7 @@ export function Shell({ children }: { children: ReactNode }) {
   };
   return (
     <AuthProvider>
-      <div className="h-screen flex app-bg overflow-hidden">
-        <Sidebar collapsed={collapsed} onToggle={toggle} />
-        <div className="flex-1 flex flex-col min-w-0">
-          <Topbar />
-          <main className="flex-1 min-h-0 overflow-auto">{children}</main>
-        </div>
-      </div>
+      <ShellFrame collapsed={collapsed} onToggle={toggle}>{children}</ShellFrame>
     </AuthProvider>
   );
 }
