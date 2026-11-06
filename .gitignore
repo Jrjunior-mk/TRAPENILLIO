@@ -9,3 +9,7 @@ node_modules/
 next-env.d.ts
 *.tsbuildinfo
 *.log
+
+.vercel
+.env*
+!.env.example
