@@ -17,8 +17,8 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db, session_factory
-from ..models import User
-from ..security import COOKIE, audit, current_user, read_token, require, sign_token, user_from_token
+from ..models import User, Vehicle
+from ..security import COOKIE, alert_visible, audit, current_user, has_permission, read_token, require, sign_token, user_from_token
 from ..services.adapters import adapters
 from ..sim.l1_sensor import edge_pipeline, synth_signal
 from ..sim.network import network_json
@@ -46,12 +46,12 @@ def live_kpi(user: User = Depends(current_user)):
 
 
 @router.get("/live/series", tags=["live"])
-def live_series(user: User = Depends(current_user)):
+def live_series(user: User = Depends(require("live.history"))):
     return {"series": engine().series(), "kind": "SIMULATED"}
 
 
 @router.get("/live/events", tags=["live"])
-def live_events(limit: int = 30, user: User = Depends(current_user)):
+def live_events(limit: int = 30, user: User = Depends(require("live.history"))):
     with engine().lock:
         return {"events": list(engine().recent_events)[:limit], "alerts": list(engine().recent_alerts)[:20]}
 
@@ -75,7 +75,7 @@ def live_control(body: ControlIn, db: Session = Depends(get_db), user: User = De
 
 
 @router.get("/live/config", tags=["live"])
-def get_config(user: User = Depends(current_user)):
+def get_config(user: User = Depends(require("sim.view"))):
     cfg = engine().cfg
     return {"config": cfg.model_dump(), "provenance": PARAM_PROVENANCE, "lane_capacity_per_h": round(cfg.lane_capacity_per_h(), 1), "lane_service_s": round(cfg.lane_service_s(), 2), "enrolment": cfg.enrolment()}
 
@@ -93,21 +93,27 @@ def put_config(body: dict, db: Session = Depends(get_db), user: User = Depends(r
 
 
 @router.get("/twin/trucks/{truck_id}", tags=["twin"])
-def twin_truck(truck_id: str, user: User = Depends(current_user)):
+def twin_truck(truck_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
     d = engine().truck_detail(truck_id)
     if d is None:
         raise HTTPException(404, "That truck has left the modelled corridor")
+    if not has_permission(user, "twin.details"):
+        vehicle = db.scalar(select(Vehicle).where(Vehicle.tractor_plate == d["tractor_plate"])) if user.role == "transporter" else None
+        if not vehicle or vehicle.fleet_id != user.fleet_id:
+            raise HTTPException(403, "Details are only available for trucks in your own fleet")
     return d
 
 
 @router.get("/twin/stations", tags=["twin"])
-def twin_stations(user: User = Depends(current_user)):
+def twin_stations(user: User = Depends(require("twin.details"))):
     e = engine()
     return {"stations": [e.station_view(pid) for pid in e.plazas]}
 
 
 @router.get("/twin/stations/{pid}", tags=["twin"])
 def twin_station(pid: str, user: User = Depends(current_user)):
+    if not has_permission(user, "twin.details") and not (user.role == "loader" and user.site_id == pid):
+        raise HTTPException(403, "Station details are not available for your role")
     e = engine()
     if pid not in e.plazas:
         raise HTTPException(404, "Unknown station")
@@ -215,7 +221,7 @@ class LaneInject(BaseModel):
 
 
 @router.get("/lane/{station}", tags=["lane"])
-def lane_view(station: str, user: User = Depends(current_user)):
+def lane_view(station: str, user: User = Depends(require("lane.view"))):
     e = engine()
     if station not in e.plazas or not e.plazas[station].geom.has_lane:
         raise HTTPException(404, "That site has no Rolling Verification Lane")
@@ -247,13 +253,13 @@ def lane_inject(station: str, body: LaneInject, db: Session = Depends(get_db), u
 
 # ------------------------------------------------------------------ sensors
 @router.get("/sensors", tags=["sensors"])
-def sensors_all(user: User = Depends(current_user)):
+def sensors_all(user: User = Depends(require("sensors.view"))):
     e = engine()
     return {"sites": [e.sensors_view(pid) for pid in e.plazas], "demo": "Simulated sensor stream. No physical devices are attached."}
 
 
 @router.get("/sensors/{site}", tags=["sensors"])
-def sensors_site(site: str, user: User = Depends(current_user)):
+def sensors_site(site: str, user: User = Depends(require("sensors.view"))):
     e = engine()
     if site not in e.plazas:
         raise HTTPException(404, "Unknown site")
@@ -270,7 +276,7 @@ class PipelineIn(BaseModel):
 
 
 @router.post("/sensors/pipeline/run", tags=["sensors"])
-def pipeline(body: PipelineIn, user: User = Depends(current_user)):
+def pipeline(body: PipelineIn, user: User = Depends(require("sensors.view"))):
     """Runs the ten edge stages on a synthetic signal. The stage timings are real timings of this code on this machine."""
     limit_t = [8000.0, 9000.0, 9000.0, 8000.0, 8000.0, 8000.0]
     axles = [x * body.load_ratio * (0.98 + 0.04 * random.random()) for x in limit_t]
@@ -291,20 +297,33 @@ def pipeline(body: PipelineIn, user: User = Depends(current_user)):
 # ------------------------------------------------------------------ websocket
 class Hub:
     def __init__(self) -> None:
-        self.clients: set[WebSocket] = set()
+        self.clients: dict[WebSocket, User] = {}
 
     async def broadcast(self, payload: dict) -> None:
         if not self.clients:
             return
         text = json.dumps(payload, separators=(",", ":"), default=str)
+        await self._send(text, list(self.clients))
+
+    async def broadcast_events(self, events: list[dict]) -> None:
+        """Decision events name trucks across every fleet, so only roles with the corridor-wide view receive them."""
+        await self._send(json.dumps({"t": "events", "events": events}, separators=(",", ":"), default=str), [ws for ws, u in self.clients.items() if has_permission(u, "live.history")])
+
+    async def broadcast_alerts(self, alerts: list[dict]) -> None:
+        for ws, user in list(self.clients.items()):
+            mine = [a for a in alerts if alert_visible(user, a.get("kind"), a.get("site"))]
+            if mine:
+                await self._send(json.dumps({"t": "alerts", "alerts": mine}, separators=(",", ":"), default=str), [ws])
+
+    async def _send(self, text: str, sockets: list[WebSocket]) -> None:
         dead = []
-        for ws in list(self.clients):
+        for ws in sockets:
             try:
                 await ws.send_text(text)
             except Exception:  # noqa: BLE001
                 dead.append(ws)
         for ws in dead:
-            self.clients.discard(ws)
+            self.clients.pop(ws, None)
 
 
 hub = Hub()
@@ -377,7 +396,7 @@ async def ws_live(ws: WebSocket):
         await ws.close(code=4401)
         return
     await ws.accept()
-    hub.clients.add(ws)
+    hub.clients[ws] = user
     session = sign_token(user.username, "session", 3600) if serverless else None
     pending: set[asyncio.Task] = set()
     try:
@@ -395,7 +414,7 @@ async def ws_live(ws: WebSocket):
     except (WebSocketDisconnect, ValueError):
         pass
     finally:
-        hub.clients.discard(ws)
+        hub.clients.pop(ws, None)
 
 
 async def simulation_loop() -> None:
@@ -426,9 +445,9 @@ async def simulation_loop() -> None:
                     e.events_out.clear()
                     e.alerts_out.clear()
                 if events:
-                    await hub.broadcast({"t": "events", "events": events[-30:]})
+                    await hub.broadcast_events(events[-30:])
                 if alerts:
-                    await hub.broadcast({"t": "alerts", "alerts": alerts})
+                    await hub.broadcast_alerts(alerts)
             else:
                 with e.lock:
                     e.events_out.clear()

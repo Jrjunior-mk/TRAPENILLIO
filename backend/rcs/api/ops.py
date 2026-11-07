@@ -15,7 +15,7 @@ from ..domain.policy import POLICY_PROVENANCE, Policy
 from ..domain.tokens import LIFECYCLE, b64u, b64u_dec, can_transition, parse_iso, verify_signature
 from ..domain.vehicle import AXLE_CONFIGS, effective_config_with_lift, gross_limit_for, groups_for
 from ..models import ClearanceEvent, Fleet, Site, Token, TokenEvent, User, Vehicle
-from ..security import COOKIE, ROLES, audit, create_session, current_user, decrypt_field, destroy_session, encrypt_field, has_permission, permissions_for, require, verify_password
+from ..security import COOKIE, ROLES, audit, create_session, current_user, decrypt_field, destroy_session, encrypt_field, has_permission, home_for, permissions_for, require, sections_for, verify_password
 from ..seed import vehicle_dict
 from ..services import clearance as C
 from ..services.adapters import adapters
@@ -32,7 +32,7 @@ class LoginIn(BaseModel):
 
 
 def user_json(u: User) -> dict:
-    return {"id": u.id, "username": u.username, "display_name": u.display_name, "role": u.role, "role_label": ROLES.get(u.role, u.role), "org": u.org, "fleet_id": u.fleet_id, "site_id": u.site_id, "permissions": permissions_for(u.role)}
+    return {"id": u.id, "username": u.username, "display_name": u.display_name, "role": u.role, "role_label": ROLES.get(u.role, u.role), "org": u.org, "fleet_id": u.fleet_id, "site_id": u.site_id, "permissions": permissions_for(u.role), "sections": sections_for(u.role), "home": home_for(u.role)}
 
 
 @router.post("/auth/login", tags=["auth"])
@@ -94,7 +94,7 @@ def vehicle_json(v: Vehicle, fleet: str | None, include_pii: bool = False) -> di
 
 
 @router.get("/trucks", tags=["trucks"])
-def list_trucks(q: str | None = None, fleet_id: int | None = None, limit: int = Query(50, le=200), offset: int = 0, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def list_trucks(q: str | None = None, fleet_id: int | None = None, limit: int = Query(50, le=200), offset: int = 0, db: Session = Depends(get_db), user: User = Depends(require("truck.view"))):
     stmt = _scope(user, select(Vehicle, Fleet.name).join(Fleet, Vehicle.fleet_id == Fleet.id, isouter=True))
     if q:
         like = f"%{q.upper()}%"
@@ -107,7 +107,7 @@ def list_trucks(q: str | None = None, fleet_id: int | None = None, limit: int = 
 
 
 @router.get("/trucks/options", tags=["trucks"])
-def truck_options(db: Session = Depends(get_db), user: User = Depends(current_user)):
+def truck_options(db: Session = Depends(get_db), user: User = Depends(require("truck.view"))):
     return {"axle_configs": AXLE_CONFIGS, "fleets": [{"id": f.id, "name": f.name} for f in db.scalars(select(Fleet).order_by(Fleet.name))], "samples": C.SAMPLES, "sites": [{"id": s.id, "name": s.name, "kind": s.kind, "origin_type": s.origin_type} for s in db.scalars(select(Site))]}
 
 
@@ -132,7 +132,7 @@ def register_truck(body: VehicleIn, db: Session = Depends(get_db), user: User = 
 
 
 @router.get("/trucks/{plate}", tags=["trucks"])
-def truck_profile(plate: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def truck_profile(plate: str, db: Session = Depends(get_db), user: User = Depends(require("truck.view"))):
     plate = plate.upper()
     v = db.scalar(select(Vehicle).where(Vehicle.tractor_plate == plate))
     if not v:
@@ -182,7 +182,7 @@ def clear_lane(body: C.LaneIn, db: Session = Depends(get_db), user: User = Depen
 
 
 @router.get("/clearance/events", tags=["clearance"])
-def clearance_events(site: str | None = None, outcome: str | None = None, plate: str | None = None, stream: str | None = None, stage: str | None = None, limit: int = Query(50, le=300), offset: int = 0, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def clearance_events(site: str | None = None, outcome: str | None = None, plate: str | None = None, stream: str | None = None, stage: str | None = None, limit: int = Query(50, le=300), offset: int = 0, db: Session = Depends(get_db), user: User = Depends(require("events.view"))):
     stmt = select(ClearanceEvent)
     if site:
         stmt = stmt.where(ClearanceEvent.site == site)
@@ -203,7 +203,7 @@ def clearance_events(site: str | None = None, outcome: str | None = None, plate:
 
 
 @router.get("/clearance/events/{event_id}", tags=["clearance"])
-def clearance_event(event_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def clearance_event(event_id: str, db: Session = Depends(get_db), user: User = Depends(require("events.view"))):
     e = db.get(ClearanceEvent, event_id)
     if not e:
         raise HTTPException(404, "Event not found")
@@ -431,7 +431,7 @@ class EvaluateIn(BaseModel):
 
 
 @router.post("/decisions/evaluate", tags=["decisions"])
-def evaluate(b: EvaluateIn, user: User = Depends(current_user)):
+def evaluate(b: EvaluateIn, user: User = Depends(require("decisions.view"))):
     """Dry run of the engine: nothing is recorded. Used by the decision console."""
     policy = engine().policy
     if b.config not in AXLE_CONFIGS:
@@ -466,7 +466,7 @@ def evaluate(b: EvaluateIn, user: User = Depends(current_user)):
 
 
 @router.get("/decisions/policy", tags=["decisions"])
-def get_policy(user: User = Depends(current_user)):
+def get_policy(user: User = Depends(require("decisions.view"))):
     return {"policy": engine().policy.model_dump(), "provenance": POLICY_PROVENANCE, "note": "Limits come from the source documents and must be re-verified. Editing them here changes demo behaviour only."}
 
 

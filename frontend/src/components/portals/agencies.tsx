@@ -139,7 +139,7 @@ interface NtsaFleet { id: number; name: string; demerits: number; clean_record: 
 interface NtsaData { note: string; vehicles: NtsaVehicle[]; fleets: NtsaFleet[] }
 
 export function NtsaPortal() {
-  const { me } = useAuth();
+  const { me, has } = useAuth();
   const [text, setText] = useState("");
   const [term, setTerm] = useState("");
   useEffect(() => {
@@ -186,7 +186,7 @@ export function NtsaPortal() {
               maxH="620px"
               empty="No fleets registered."
               cols={[
-                { key: "name", label: "Fleet", render: (r) => (own ? r.name : <Link href={`/portals/transporter?fleet=${r.id}`} className="text-accent hover:underline">{r.name}</Link>) },
+                { key: "name", label: "Fleet", render: (r) => (own || !has("portal:transporter") ? r.name : <Link href={`/portals/transporter?fleet=${r.id}`} className="text-accent hover:underline">{r.name}</Link>) },
                 { key: "demerits", label: "Demerits", align: "right", mono: true, render: (r) => r.demerits },
                 { key: "clean", label: "Record", render: (r) => (r.clean_record ? <Badge>Clean</Badge> : <Badge tone="wait">Not clean</Badge>) },
               ]}

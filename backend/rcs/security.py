@@ -32,30 +32,101 @@ ROLES = {
     "loader": "Loading-site operator",
     "viewer": "Read-only observer",
 }
+# Only the administrator holds everything. Every other role gets its own work and the digital twin. The API enforces
+# this: the menus only reflect it.
 PERMISSIONS: dict[str, set[str]] = {
-    "live.control": {"admin", "kenha"},
-    "faults.inject": {"admin", "kenha"},
-    "sim.run": {"admin", "kenha", "kpa", "kra", "ntsa", "viewer"},
+    "live.control": {"admin"},
+    "live.history": {"admin", "viewer"},
+    "faults.inject": {"admin"},
+    "sim.run": {"admin"},
+    "sim.view": {"admin", "viewer"},
+    "twin.details": {"admin", "kenha", "kpa", "kra", "ntsa", "viewer"},
     "truck.register": {"admin", "kenha", "kpa", "transporter", "loader"},
-    "truck.view_all": {"admin", "kenha", "kpa", "kra", "ntsa", "viewer"},
+    "truck.view": {"admin", "kenha", "kpa", "kra", "ntsa", "transporter", "loader"},
+    "truck.view_all": {"admin", "kenha", "kpa", "kra", "ntsa"},
     "clear.port": {"admin", "kpa"},
     "clear.origin": {"admin", "loader"},
     "clear.road": {"admin", "kenha"},
-    "token.view": {"admin", "kenha", "kpa", "kra", "ntsa", "transporter", "loader", "viewer"},
+    "events.view": {"admin"},
+    "token.view": {"admin", "kenha", "kpa", "kra", "transporter", "loader"},
     "token.manage": {"admin", "kenha"},
+    "site.manage": {"admin"},
+    "decisions.view": {"admin"},
     "policy.edit": {"admin"},
     "case.decide": {"admin", "kenha"},
     "calibration.edit": {"admin", "kenha"},
+    "dispute.view": {"admin", "kenha", "transporter"},
     "dispute.create": {"admin", "transporter"},
     "dispute.resolve": {"admin", "kenha"},
-    "audit.view": {"admin", "kenha"},
+    "audit.view": {"admin"},
     "admin.users": {"admin"},
     "admin.retention": {"admin"},
-    "alert.ack": {"admin", "kenha", "kpa", "kra", "ntsa"},
-    "lane.test": {"admin", "kenha"},
-    "portal.agency": {"admin", "kenha", "kpa", "kra", "ntsa", "viewer"},
-    "portal.loader": {"admin", "kenha", "loader", "viewer"},
+    "admin.health": {"admin"},
+    "alert.view": {"admin", "kenha", "kpa", "kra", "ntsa", "loader"},
+    "alert.ack": {"admin", "kenha", "kpa", "kra", "ntsa", "loader"},
+    "lane.view": {"admin", "kenha"},
+    "lane.test": {"admin"},
+    "sensors.view": {"admin", "kenha"},
+    "portal.kenha": {"admin", "kenha"},
+    "portal.kpa": {"admin", "kpa"},
+    "portal.kra": {"admin", "kra"},
+    "portal.ntsa": {"admin", "ntsa"},
+    "portal.transporter": {"admin", "transporter"},
+    "portal.loader": {"admin", "loader"},
 }
+
+# What each role sees in the application. The first page a role lands on is its own dashboard.
+HOME = {"kenha": "/portals/kenha", "kpa": "/portals/kpa", "kra": "/portals/kra", "ntsa": "/portals/ntsa", "transporter": "/portals/transporter", "loader": "/portals/loader"}
+SECTION_ROLES: dict[str, set[str]] = {
+    "command": {"admin", "viewer"},
+    "twin": set(ROLES),
+    "clearance": {"admin", "kenha", "kpa", "transporter", "loader"},
+    "trucks": PERMISSIONS["truck.view"],
+    "tokens": PERMISSIONS["token.view"],
+    "decisions": {"admin"},
+    "lane": PERMISSIONS["lane.view"],
+    "sensors": PERMISSIONS["sensors.view"],
+    "simulation": {"admin"},
+    "analytics": PERMISSIONS["sim.view"],
+    "alerts": PERMISSIONS["alert.view"],
+    "portals": {"admin"},
+    "portal:kenha": PERMISSIONS["portal.kenha"],
+    "portal:kpa": PERMISSIONS["portal.kpa"],
+    "portal:kra": PERMISSIONS["portal.kra"],
+    "portal:ntsa": PERMISSIONS["portal.ntsa"],
+    "portal:transporter": PERMISSIONS["portal.transporter"],
+    "portal:loader": PERMISSIONS["portal.loader"],
+    "portal:admin": {"admin"},
+}
+PORT_SITE = "port_node"
+KRA_ALERT_KINDS = {"overload", "token_mismatch", "identity", "suspicious_fleet", "token"}
+NTSA_ALERT_KINDS = {"identity", "suspicious_fleet"}
+
+
+def sections_for(role: str) -> list[str]:
+    return [name for name, roles in SECTION_ROLES.items() if role in roles]
+
+
+def home_for(role: str) -> str:
+    return HOME.get(role, "/")
+
+
+def alert_visible(user, kind: str | None, site: str | None) -> bool:
+    """Which alerts belong to a role. Used for the alert list and for the live stream."""
+    role = user.role
+    if role in ("admin", "viewer"):
+        return True
+    if role == "kenha":
+        return site != PORT_SITE
+    if role == "kpa":
+        return site == PORT_SITE
+    if role == "kra":
+        return kind in KRA_ALERT_KINDS
+    if role == "ntsa":
+        return kind in NTSA_ALERT_KINDS
+    if role == "loader":
+        return bool(user.site_id) and site == user.site_id
+    return False
 
 
 def _master_key() -> bytes:

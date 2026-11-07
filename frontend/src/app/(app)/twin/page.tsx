@@ -16,6 +16,7 @@ const Scene = dynamic(() => import("@/components/twin/Scene"), { ssr: false, loa
 const SPEEDS = [1, 5, 10, 20, 60, 120, 240];
 
 function TruckPanel({ id, onClose }: { id: string; onClose: () => void }) {
+  const { has } = useAuth();
   const { data, error } = useApi(`/twin/trucks/${id}`, 1000);
   if (error) return (
     <Card title="Truck" onClose={onClose}><div className="text-ink-3 text-[12px]">{error}</div></Card>
@@ -45,14 +46,15 @@ function TruckPanel({ id, onClose }: { id: string; onClose: () => void }) {
         </div>
       )}
       <div className="flex gap-2 mt-3">
-        <Link className="text-accent text-[11.5px] inline-flex items-center gap-1" href={`/trucks/${encodeURIComponent(data.tractor_plate)}`}>Full profile <ExternalLink size={11} /></Link>
-        {data.token_id && <Link className="text-accent text-[11.5px] inline-flex items-center gap-1" href={`/tokens?id=${data.token_id}`}>Token <ExternalLink size={11} /></Link>}
+        {has("trucks") && <Link className="text-accent text-[11.5px] inline-flex items-center gap-1" href={`/trucks/${encodeURIComponent(data.tractor_plate)}`}>Full profile <ExternalLink size={11} /></Link>}
+        {data.token_id && has("tokens") && <Link className="text-accent text-[11.5px] inline-flex items-center gap-1" href={`/tokens?id=${data.token_id}`}>Token <ExternalLink size={11} /></Link>}
       </div>
     </Card>
   );
 }
 
 function StationPanel({ id, onClose }: { id: string; onClose: () => void }) {
+  const { has } = useAuth();
   const { data } = useApi(`/twin/stations/${id}`, 1500);
   const { can } = useAuth();
   if (!data) return <Card title="Station" onClose={onClose}><Loading /></Card>;
@@ -76,8 +78,8 @@ function StationPanel({ id, onClose }: { id: string; onClose: () => void }) {
       {data.sensors_failed.length > 0 && <div className="mt-3 text-[11.5px] text-wait">Failed: {data.sensors_failed.join(", ")}</div>}
       <div className="flex flex-wrap gap-2 mt-3">
         {can("faults.inject") && <Button size="sm" variant={data.online ? "danger" : "primary"} onClick={toggleLink}>{data.online ? "Cut cloud link" : "Restore link"}</Button>}
-        <Link href={`/sensors?site=${id}`} className="text-accent text-[11.5px] self-center">Sensors</Link>
-        {data.has_lane && <Link href={`/lane?station=${id}`} className="text-accent text-[11.5px] self-center">Verification lane</Link>}
+        {has("sensors") && <Link href={`/sensors?site=${id}`} className="text-accent text-[11.5px] self-center">Sensors</Link>}
+        {data.has_lane && has("lane") && <Link href={`/lane?station=${id}`} className="text-accent text-[11.5px] self-center">Verification lane</Link>}
       </div>
     </Card>
   );

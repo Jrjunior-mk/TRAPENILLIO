@@ -6,6 +6,7 @@ import { Suspense, useMemo, useState } from "react";
 import { actionLabel, type ClearanceEvent, EventDrawer, tokenHref } from "@/components/clearance-bits";
 import { PageTitle } from "@/components/shell";
 import { Badge, DataTable, Empty, ErrorBox, KV, Loading, Note, Outcome, Panel, Provenance, TokenStatus } from "@/components/ui";
+import { useAuth } from "@/lib/auth";
 import { useApi } from "@/lib/api";
 import { fmtDateTime, fmtInt, fmtKg, fmtNum, fmtPct, fmtTime, siteName } from "@/lib/format";
 
@@ -74,6 +75,7 @@ function AxleReport({ event, groups, config, grossLimit }: { event: ClearanceEve
 }
 
 function TruckInner() {
+  const { can, has } = useAuth();
   const params = useParams<{ plate: string }>();
   const router = useRouter();
   const plate = useMemo(() => {
@@ -87,7 +89,7 @@ function TruckInner() {
   const { data, error, loading } = useApi<Profile>(plate ? `/trucks/${encodeURIComponent(plate)}` : null, 10000);
   const [event, setEvent] = useState<ClearanceEvent | null>(null);
 
-  const back = <Link href="/clearance?tab=fleet" className="inline-flex items-center gap-1 text-[12px] text-accent hover:underline"><ArrowLeft size={12} />Registered fleet</Link>;
+  const back = has("clearance") ? <Link href="/clearance?tab=fleet" className="inline-flex items-center gap-1 text-[12px] text-accent hover:underline"><ArrowLeft size={12} />Registered fleet</Link> : null;
   if (!data && loading) return <Loading text={`Loading ${plate}`} />;
   if (!data) return (
     <div className="p-3 space-y-2">
@@ -107,7 +109,7 @@ function TruckInner() {
           <>
             <Provenance kind="DEMO DATA" title="Synthetic vehicle record" />
             {data.live_truck && <Link href={`/twin?truck=${encodeURIComponent(data.live_truck)}`} className="inline-flex items-center gap-1 text-[12px] text-accent hover:underline"><Box size={12} />Watch on the twin</Link>}
-            <Link href={`/clearance?tab=road&plate=${encodeURIComponent(v.plate)}`} className="text-[12px] text-accent hover:underline">Process this truck</Link>
+            {can("clear.road") && <Link href={`/clearance?tab=road&plate=${encodeURIComponent(v.plate)}`} className="text-[12px] text-accent hover:underline">Process this truck</Link>}
             {back}
           </>
         }

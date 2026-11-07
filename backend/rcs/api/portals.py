@@ -6,12 +6,12 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import case, delete, desc, func, select
+from sqlalchemy import case, delete, desc, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from ..db import get_db, write_behind
 from ..models import Alert, AuditLog, CalibrationRecord, ClearanceEvent, Dispute, Fleet, OfficerCase, Site, Token, User, Vehicle
-from ..security import ROLES, audit, current_user, has_permission, require, verify_audit_chain
+from ..security import KRA_ALERT_KINDS, NTSA_ALERT_KINDS, PORT_SITE, ROLES, alert_visible, audit, current_user, has_permission, require, verify_audit_chain
 from ..services.adapters import adapters
 from ..state import engine, get_setting, state
 from .common import case_json, event_json, iso
@@ -23,7 +23,7 @@ MOCK_NOTE = "All agency data on this page comes from clearly labelled mock adapt
 
 # ---- portals
 @router.get("/portals/kenha", tags=["portals"])
-def portal_kenha(db: Session = Depends(get_db), user: User = Depends(require("case.decide"))):
+def portal_kenha(db: Session = Depends(get_db), user: User = Depends(require("portal.kenha"))):
     write_behind.flush(2)
     e = engine()
     cases = db.scalars(select(OfficerCase).order_by(case((OfficerCase.status == "PENDING", 0), else_=1), desc(OfficerCase.created_at)).limit(100)).all()
@@ -41,7 +41,7 @@ def cal_json(c: CalibrationRecord) -> dict:
 
 
 @router.get("/portals/kpa", tags=["portals"])
-def portal_kpa(db: Session = Depends(get_db), user: User = Depends(require("portal.agency"))):
+def portal_kpa(db: Session = Depends(get_db), user: User = Depends(require("portal.kpa"))):
     write_behind.flush(2)
     e = engine()
     events = db.scalars(select(ClearanceEvent).where(ClearanceEvent.site == "port_node").order_by(desc(ClearanceEvent.at)).limit(40)).all()
@@ -59,7 +59,7 @@ def portal_kpa(db: Session = Depends(get_db), user: User = Depends(require("port
 
 
 @router.get("/portals/kra", tags=["portals"])
-def portal_kra(db: Session = Depends(get_db), user: User = Depends(require("portal.agency"))):
+def portal_kra(db: Session = Depends(get_db), user: User = Depends(require("portal.kra"))):
     write_behind.flush(2)
     tol = engine().policy.expected_variance_tolerance_pct
     tokens = db.scalars(select(Token).where(Token.source == "port").order_by(desc(Token.issued_at)).limit(60)).all()
@@ -74,7 +74,7 @@ def portal_kra(db: Session = Depends(get_db), user: User = Depends(require("port
 
 
 @router.get("/portals/ntsa", tags=["portals"])
-def portal_ntsa(q: str | None = None, db: Session = Depends(get_db), user: User = Depends(require("portal.agency"))):
+def portal_ntsa(q: str | None = None, db: Session = Depends(get_db), user: User = Depends(require("portal.ntsa"))):
     stmt = select(Vehicle, Fleet.name).join(Fleet, Vehicle.fleet_id == Fleet.id, isouter=True)
     if q:
         stmt = stmt.where(Vehicle.tractor_plate.like(f"%{q.upper()}%"))
@@ -84,14 +84,12 @@ def portal_ntsa(q: str | None = None, db: Session = Depends(get_db), user: User 
 
 
 @router.get("/portals/transporter", tags=["portals"])
-def portal_transporter(fleet_id: int | None = None, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def portal_transporter(fleet_id: int | None = None, db: Session = Depends(get_db), user: User = Depends(require("portal.transporter"))):
     write_behind.flush(2)
     if user.role == "transporter":
         fleet_id = user.fleet_id
         if fleet_id is None:
             raise HTTPException(403, "This account is not linked to a fleet")
-    elif not has_permission(user, "truck.view_all"):
-        raise HTTPException(403, "Transporter data is limited to the fleet and to agencies")
     fleet_id = fleet_id or 1
     fleet = db.get(Fleet, fleet_id)
     if not fleet:
@@ -132,7 +130,7 @@ class SiteFlagsIn(BaseModel):
 
 
 @router.post("/portals/loader/{site}/flags", tags=["portals"])
-def loader_flags(site: str, body: SiteFlagsIn, db: Session = Depends(get_db), user: User = Depends(require("token.manage"))):
+def loader_flags(site: str, body: SiteFlagsIn, db: Session = Depends(get_db), user: User = Depends(require("site.manage"))):
     e = engine()
     if site not in e.plazas or e.plazas[site].kind != "origin":
         raise HTTPException(404, "Unknown origin node")
@@ -223,7 +221,7 @@ def dispute_json(d: Dispute) -> dict:
 
 
 @router.get("/disputes", tags=["portals"])
-def list_disputes(db: Session = Depends(get_db), user: User = Depends(current_user)):
+def list_disputes(db: Session = Depends(get_db), user: User = Depends(require("dispute.view"))):
     stmt = select(Dispute).order_by(desc(Dispute.created_at)).limit(100)
     if user.role == "transporter":
         stmt = stmt.where(Dispute.fleet_id == user.fleet_id)
@@ -263,10 +261,25 @@ def resolve_dispute(did: int, body: DisputeResolve, db: Session = Depends(get_db
 
 
 # ---- alerts and audit
+def _alert_scope(user: User):
+    """The database form of security.alert_visible."""
+    if user.role == "kenha":
+        return or_(Alert.site.is_(None), Alert.site != PORT_SITE)
+    if user.role == "kpa":
+        return Alert.site == PORT_SITE
+    if user.role == "kra":
+        return Alert.kind.in_(KRA_ALERT_KINDS)
+    if user.role == "ntsa":
+        return Alert.kind.in_(NTSA_ALERT_KINDS)
+    if user.role == "loader":
+        return Alert.site == user.site_id
+    return true()
+
+
 @router.get("/alerts", tags=["alerts"])
-def alerts(severity: str | None = None, kind: str | None = None, open_only: bool = False, limit: int = Query(80, le=300), db: Session = Depends(get_db), user: User = Depends(current_user)):
+def alerts(severity: str | None = None, kind: str | None = None, open_only: bool = False, limit: int = Query(80, le=300), db: Session = Depends(get_db), user: User = Depends(require("alert.view"))):
     write_behind.flush(2)
-    stmt = select(Alert)
+    stmt = select(Alert).where(_alert_scope(user))
     if severity:
         stmt = stmt.where(Alert.severity == severity)
     if kind:
@@ -274,13 +287,15 @@ def alerts(severity: str | None = None, kind: str | None = None, open_only: bool
     if open_only:
         stmt = stmt.where(Alert.ack_at.is_(None))
     rows = db.scalars(stmt.order_by(desc(Alert.at), desc(Alert.id)).limit(limit)).all()
-    counts = dict(db.execute(select(Alert.severity, func.count()).where(Alert.ack_at.is_(None)).group_by(Alert.severity)).all())
+    counts = dict(db.execute(select(Alert.severity, func.count()).where(Alert.ack_at.is_(None), _alert_scope(user)).group_by(Alert.severity)).all())
     return {"items": [{"id": a.id, "at": iso(a.at), "severity": a.severity, "kind": a.kind, "site": a.site, "title": a.title, "detail": a.detail, "ack_by": a.ack_by, "ack_at": iso(a.ack_at)} for a in rows], "open_counts": counts}
 
 
 @router.post("/alerts/{aid}/ack", tags=["alerts"])
 def ack_alert(aid: int, db: Session = Depends(get_db), user: User = Depends(require("alert.ack"))):
     a = db.get(Alert, aid)
+    if a and not alert_visible(user, a.kind, a.site):
+        raise HTTPException(403, "This alert belongs to another agency")
     if not a:
         raise HTTPException(404, "Alert not found")
     a.ack_by, a.ack_at = user.display_name, datetime.now(timezone.utc)
@@ -361,7 +376,7 @@ def run_retention(db: Session = Depends(get_db), user: User = Depends(require("a
 
 
 @router.get("/admin/health", tags=["admin"])
-def health_detail(db: Session = Depends(get_db), user: User = Depends(current_user)):
+def health_detail(db: Session = Depends(get_db), user: User = Depends(require("admin.health"))):
     e = engine()
     k = e.kpi()
     return {"system": k["system"], "conservation": k["conservation"], "bus": e.bus.stats(), "write_behind": {"written": write_behind.written, "errors": write_behind.errors, "last_error": write_behind.last_error, "queue": write_behind.q.qsize()}, "database": db.bind.dialect.name, "stations": k["stations"], "audit_chain": verify_audit_chain(db) if has_permission(user, "audit.view") else None, "mqtt": "bridged to a broker" if e.bus.bridge else "in-process (MQTT-compatible topics)"}
@@ -377,7 +392,10 @@ def search(q: str = Query(min_length=2, max_length=40), db: Session = Depends(ge
         for pid, p in e.plazas.items():
             if q.lower() in p.name.lower():
                 out.append({"type": "station", "id": pid, "label": p.name, "href": f"/twin?station={pid}"})
-        for t in list(e.trucks.values()):
+        own_plates = set(db.scalars(select(Vehicle.tractor_plate).where(Vehicle.fleet_id == user.fleet_id))) if user.role == "transporter" else None
+        for t in list(e.trucks.values()) if has_permission(user, "twin.details") or own_plates else []:
+            if own_plates is not None and t.plate not in own_plates:
+                continue
             if q.upper() in t.plate or (t.container and q.upper() in t.container):
                 out.append({"type": "live truck", "id": t.id, "label": f"{t.plate} on the road ({t.state.lower()})", "href": f"/twin?truck={t.id}"})
                 if len(out) > 8:
@@ -385,7 +403,7 @@ def search(q: str = Query(min_length=2, max_length=40), db: Session = Depends(ge
     stmt = select(Vehicle.tractor_plate).where(Vehicle.tractor_plate.like(like)).limit(6)
     if user.role == "transporter":
         stmt = stmt.where(Vehicle.fleet_id == user.fleet_id)
-    for plate in db.scalars(stmt):
+    for plate in db.scalars(stmt) if has_permission(user, "truck.view") else []:
         out.append({"type": "truck", "id": plate, "label": plate, "href": f"/trucks/{plate.replace(' ', '%20')}"})
     if has_permission(user, "token.view"):
         stmt = select(Token).where((Token.token_id.like(like)) | (Token.tractor_plate.like(like)) | (Token.container_number.like(like))).order_by(desc(Token.issued_at)).limit(6)

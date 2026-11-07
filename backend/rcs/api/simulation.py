@@ -88,7 +88,7 @@ def l2_run(body: L2In, user: User = Depends(require("sim.run"))):
 
 
 @router.get("/l2/scenarios")
-def l2_scenarios(user: User = Depends(current_user)):
+def l2_scenarios(user: User = Depends(require("sim.view"))):
     return {"scenarios": [{"id": s.key, "label": s.label, "note": s.note} for s in SCENARIOS.values()], "metrics": METRICS}
 
 
@@ -214,7 +214,7 @@ def exp_json(e: Experiment, with_result: bool = False) -> dict:
 
 
 @router.get("/experiments")
-def experiments(kind: str | None = None, limit: int = Query(30, le=100), db: Session = Depends(get_db), user: User = Depends(current_user)):
+def experiments(kind: str | None = None, limit: int = Query(30, le=100), db: Session = Depends(get_db), user: User = Depends(require("sim.view"))):
     stmt = select(Experiment)
     if kind:
         stmt = stmt.where(Experiment.kind == kind)
@@ -223,7 +223,7 @@ def experiments(kind: str | None = None, limit: int = Query(30, le=100), db: Ses
 
 
 @router.get("/experiments/{eid}")
-def experiment(eid: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def experiment(eid: str, db: Session = Depends(get_db), user: User = Depends(require("sim.view"))):
     e = db.get(Experiment, eid)
     if not e:
         raise HTTPException(404, "Experiment not found")
@@ -264,7 +264,7 @@ def _rows(e: Experiment) -> tuple[list[str], list[list]]:
 
 
 @router.get("/experiments/{eid}/export.csv")
-def export_csv(eid: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def export_csv(eid: str, db: Session = Depends(get_db), user: User = Depends(require("sim.view"))):
     e = db.get(Experiment, eid)
     if not e or not e.result:
         raise HTTPException(404, "No finished result to export")
@@ -278,7 +278,7 @@ def export_csv(eid: str, db: Session = Depends(get_db), user: User = Depends(cur
 
 
 @router.get("/experiments/{eid}/export.pdf")
-def export_pdf(eid: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def export_pdf(eid: str, db: Session = Depends(get_db), user: User = Depends(require("sim.view"))):
     e = db.get(Experiment, eid)
     if not e or not e.result:
         raise HTTPException(404, "No finished result to export")

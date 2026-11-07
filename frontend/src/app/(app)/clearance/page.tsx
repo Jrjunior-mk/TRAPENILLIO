@@ -837,24 +837,28 @@ function ClearanceInner() {
   const params = useSearchParams();
   const router = useRouter();
   const raw = params.get("tab") || "port";
-  const tab = TAB_ALIAS[raw] || (TABS.some((t) => t.id === raw) ? raw : "port");
+  const { can } = useAuth();
+  // Each role only sees the clearance stages it carries out.
+  const tabs = TABS.filter((t) => ({ port: can("clear.port"), origin: can("clear.origin"), road: can("clear.road"), lane: can("clear.road"), fleet: true })[t.id]);
+  const wanted = TAB_ALIAS[raw] || raw;
+  const tab = tabs.some((t) => t.id === wanted) ? wanted : tabs[0].id;
   const plate = params.get("plate");
   const { data: options, error } = useApi<Options>("/trucks/options");
   return (
     <div className="p-3">
       <PageTitle
         title="Truck Clearance"
-        sub="Process a truck by hand at any stage of the corridor. Every result is a demo record, and customs, port and e-seal responses are mock data."
+        sub="Process a truck by hand at the stages your role handles. Every result is a demo record, and customs, port and e-seal responses are mock data."
         actions={<Provenance kind="DEMO DATA" title="No real agency system is connected" />}
       />
-      <Tabs tabs={TABS} value={tab} onChange={(id) => router.replace(`/clearance?tab=${id}`, { scroll: false })} />
+      <Tabs tabs={tabs} value={tab} onChange={(id) => router.replace(`/clearance?tab=${id}`, { scroll: false })} />
       <div className="mt-2">
         {error && <div className="mb-2"><ErrorBox text={`Could not load sites and options: ${error}`} /></div>}
         {/* Forms stay mounted so switching tabs keeps what was typed. */}
-        <div className={tab === "port" ? "" : "hidden"}><PortTab plate={tab === "port" ? plate : null} /></div>
-        <div className={tab === "origin" ? "" : "hidden"}><OriginTab options={options} plate={tab === "origin" ? plate : null} /></div>
-        <div className={tab === "road" ? "" : "hidden"}><RoadTab options={options} plate={tab === "road" ? plate : null} /></div>
-        <div className={tab === "lane" ? "" : "hidden"}><LaneTab options={options} plate={tab === "lane" ? plate : null} /></div>
+        {can("clear.port") && <div className={tab === "port" ? "" : "hidden"}><PortTab plate={tab === "port" ? plate : null} /></div>}
+        {can("clear.origin") && <div className={tab === "origin" ? "" : "hidden"}><OriginTab options={options} plate={tab === "origin" ? plate : null} /></div>}
+        {can("clear.road") && <div className={tab === "road" ? "" : "hidden"}><RoadTab options={options} plate={tab === "road" ? plate : null} /></div>}
+        {can("clear.road") && <div className={tab === "lane" ? "" : "hidden"}><LaneTab options={options} plate={tab === "lane" ? plate : null} /></div>}
         {tab === "fleet" && <FleetTab options={options} />}
       </div>
     </div>

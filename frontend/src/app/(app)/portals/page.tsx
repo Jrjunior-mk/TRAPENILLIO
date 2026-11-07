@@ -26,7 +26,7 @@ export default function PortalsPage() {
   const home = me?.role;
   return (
     <div className="p-3">
-      <PageTitle title="Agency portals" sub="One view per agency and role, over the same clearance records. Open any portal: the API decides what your role may see." actions={<Provenance kind="MOCK" title="Agency data comes from mock adapters and synthetic records" />} />
+      <PageTitle title="Agency portals" sub="Administrator view of every portal. Other roles only see their own." actions={<Provenance kind="MOCK" title="Agency data comes from mock adapters and synthetic records" />} />
       <div className="mb-2">
         <Note>
           {me ? <>Signed in as <span className="text-ink">{me.display_name}</span>, {me.role_label}. {CARDS.some((c) => c.id === home) ? "Your home portal is highlighted." : "This role has no home portal, so none is highlighted."} </> : null}

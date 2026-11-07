@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import { AuthProvider, useAuth } from "@/lib/auth";
+import { AuthProvider, sectionForPath, useAuth } from "@/lib/auth";
 import { fmtDate, fmtTime, siteName } from "@/lib/format";
 import { connectLive, disconnectLive, useLive } from "@/lib/live";
 import { Badge } from "./ui";
@@ -26,8 +26,22 @@ const NAV = [
 
 const CRUMBS: Record<string, string> = { twin: "Digital Twin", clearance: "Truck Clearance", tokens: "Token Registry", decisions: "Decision Engine", lane: "Verification Lane", sensors: "Sensors and Edge", simulation: "Simulation", analytics: "Analytics", portals: "Agency Portals", alerts: "Alerts and Audit", trucks: "Trucks", kenha: "KeNHA", kpa: "KPA", kra: "KRA", ntsa: "NTSA", transporter: "Transporter", loader: "Loading site", admin: "Administration" };
 
+const DASHBOARD_LABEL: Record<string, string> = { kenha: "KeNHA Dashboard", kpa: "KPA Dashboard", kra: "KRA Dashboard", ntsa: "NTSA Dashboard", transporter: "Fleet Dashboard", loader: "Loading Site Dashboard" };
+
 function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const path = usePathname();
+  const { me, has, can } = useAuth();
+  const nav = me
+    ? [
+        ...(DASHBOARD_LABEL[me.role] ? [{ href: me.home, label: DASHBOARD_LABEL[me.role], icon: Gauge }] : []),
+        ...NAV.filter((n) => has(sectionForPath(n.href))).map((n) => {
+          if (n.href === "/" && me.role === "viewer") return { ...n, label: "Overview" };
+          if (n.href === "/alerts" && !can("audit.view")) return { ...n, label: "Alerts" };
+          if (n.href === "/clearance" && !can("clear.port") && !can("clear.origin") && !can("clear.road")) return { ...n, label: "Registered Fleet" };
+          return n;
+        }),
+      ]
+    : [];
   return (
     <aside className={clsx("shrink-0 border-r border-line bg-bg-2 flex flex-col transition-[width] duration-150", collapsed ? "w-12" : "w-[196px]")}>
       <div className="h-12 flex items-center gap-2 px-3 border-b border-line shrink-0">
@@ -40,8 +54,8 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         )}
       </div>
       <nav className="flex-1 py-2 overflow-y-auto">
-        {NAV.map((n) => {
-          const active = n.href === "/" ? path === "/" : path.startsWith(n.href);
+        {nav.map((n) => {
+          const active = n.href === "/" ? path === "/" : path === n.href || path.startsWith(n.href + "/");
           const I = n.icon;
           return (
             <Link key={n.href} href={n.href} title={collapsed ? n.label : undefined} className={clsx("flex items-center gap-2.5 h-8 mx-1.5 px-2 rounded-sm text-[12px] border-l-2", active ? "bg-panel-2 text-ink border-accent" : "text-ink-3 border-transparent hover:text-ink hover:bg-panel")}>
@@ -100,6 +114,7 @@ function GlobalSearch() {
 }
 
 function Notifications() {
+  const { has } = useAuth();
   const alerts = useLive((s) => s.alerts);
   const unread = useLive((s) => s.unread);
   const clear = useLive((s) => s.clearUnread);
@@ -120,7 +135,7 @@ function Notifications() {
       </button>
       {open && (
         <div className="absolute right-0 top-8 w-[340px] bg-panel-2 border border-line-2 rounded-sm z-50 shadow-xl">
-          <div className="px-3 h-8 flex items-center border-b border-line text-[12px] font-medium">Notifications<Link href="/alerts" className="ml-auto text-accent text-[11px] font-normal">All alerts</Link></div>
+          <div className="px-3 h-8 flex items-center border-b border-line text-[12px] font-medium">Notifications<Link href={has("alerts") ? "/alerts" : "#"} hidden={!has("alerts")} className="ml-auto text-accent text-[11px] font-normal">All alerts</Link></div>
           <div className="max-h-80 overflow-auto">
             {alerts.length === 0 && <div className="px-3 py-3 text-ink-3 text-[12px]">No alerts since you opened this page.</div>}
             {alerts.slice(0, 14).map((a, i) => (
@@ -141,6 +156,7 @@ function Notifications() {
 }
 
 function HealthIndicator() {
+  const { has } = useAuth();
   const kpi = useLive((s) => s.kpi);
   const connected = useLive((s) => s.connected);
   const lost = useLive((s) => s.lost);
@@ -149,7 +165,7 @@ function HealthIndicator() {
   const text = !connected ? (lost ? "Stream lost" : "Connecting") : faults ? `${faults} degraded` : "Nominal";
   const I = connected ? Wifi : WifiOff;
   return (
-    <Link href="/sensors" title="System health" className={clsx("flex items-center gap-1.5 h-7 px-2 rounded-sm border text-[11px]", state === "go" && "border-go/40 text-go", state === "wait" && "border-wait/40 text-wait", state === "stop" && "border-stop/40 text-stop")}>
+    <Link href={has("sensors") ? "/sensors" : "#"} onClick={(e) => { if (!has("sensors")) e.preventDefault(); }} title="System health" className={clsx("flex items-center gap-1.5 h-7 px-2 rounded-sm border text-[11px]", state === "go" && "border-go/40 text-go", state === "wait" && "border-wait/40 text-wait", state === "stop" && "border-stop/40 text-stop")}>
       <I size={13} />
       {text}
     </Link>
@@ -157,7 +173,7 @@ function HealthIndicator() {
 }
 
 function Topbar() {
-  const { me } = useAuth();
+  const { me, has } = useAuth();
   const kpi = useLive((s) => s.kpi);
   const path = usePathname();
   const parts = path.split("/").filter(Boolean);
@@ -169,12 +185,12 @@ function Topbar() {
   return (
     <header className="h-12 shrink-0 border-b border-line flex items-center gap-3 px-3 bg-bg-2/80">
       <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-[12px] min-w-0 max-lg:hidden">
-        <Link href="/" className="text-ink-3 hover:text-ink">Corridor</Link>
+        <Link href={me?.home ?? "/"} className="text-ink-3 hover:text-ink">Corridor</Link>
         {parts.length === 0 && (<><ChevronRight size={12} className="text-ink-3" /><span className="text-ink">Command Centre</span></>)}
         {parts.map((p, i) => (
           <span key={i} className="flex items-center gap-1 min-w-0">
             <ChevronRight size={12} className="text-ink-3 shrink-0" />
-            {i < parts.length - 1 && p !== "trucks" ? <Link href={"/" + parts.slice(0, i + 1).join("/")} className="text-ink-3 hover:text-ink">{CRUMBS[p] || decodeURIComponent(p)}</Link> : <span className="text-ink truncate">{CRUMBS[p] || decodeURIComponent(p)}</span>}
+            {i < parts.length - 1 && p !== "trucks" && has(sectionForPath("/" + parts.slice(0, i + 1).join("/"))) ? <Link href={"/" + parts.slice(0, i + 1).join("/")} className="text-ink-3 hover:text-ink">{CRUMBS[p] || decodeURIComponent(p)}</Link> : <span className="text-ink truncate">{CRUMBS[p] || decodeURIComponent(p)}</span>}
           </span>
         ))}
       </nav>
@@ -189,7 +205,7 @@ function Topbar() {
           <div className="num text-[12px] text-ink">{fmtTime(kpi?.now)}</div>
           <div className="text-[10px] text-ink-3">{fmtDate(kpi?.now)} EAT sim</div>
         </div>
-        <Notifications />
+        {(has("alerts") || has("command")) && <Notifications />}
         <div className="flex items-center gap-2 pl-2 border-l border-line">
           <div className="text-right leading-tight max-lg:hidden">
             <div className="text-[12px] text-ink">{me?.display_name}</div>
@@ -232,6 +248,32 @@ function InstanceNotice() {
   );
 }
 
+function NoAccess({ home }: { home: string }) {
+  return (
+    <div className="p-6">
+      <div className="max-w-md border border-line rounded-sm bg-bg-2/80 p-5">
+        <h1 className="text-[15px] font-semibold text-ink">This page is not part of your dashboard</h1>
+        <p className="text-[13px] text-ink-3 mt-2">Your role does not include this section. An administrator can see every section.</p>
+        <Link href={home} className="inline-block mt-4 text-[12px] text-accent hover:underline">Go to your dashboard</Link>
+      </div>
+    </div>
+  );
+}
+
+/** Pages only mount for a role that may see them, so a refused section never flashes on screen or calls the API. */
+function RoleGate({ children }: { children: ReactNode }) {
+  const { me, has } = useAuth();
+  const path = usePathname();
+  const router = useRouter();
+  const redirectHome = !!me && path === "/" && me.home !== "/";
+  useEffect(() => {
+    if (redirectHome && me) router.replace(me.home);
+  }, [redirectHome, me, router]);
+  if (!me || redirectHome) return <div className="p-3 text-[12px] text-ink-3">Loading your dashboard</div>;
+  if (!has(sectionForPath(path))) return <NoAccess home={me.home} />;
+  return <>{children}</>;
+}
+
 function ShellFrame({ collapsed, onToggle, children }: { collapsed: boolean; onToggle: () => void; children: ReactNode }) {
   const { offline } = useAuth();
   if (offline) return <BackendOffline />;
@@ -241,7 +283,7 @@ function ShellFrame({ collapsed, onToggle, children }: { collapsed: boolean; onT
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar />
         <InstanceNotice />
-        <main className="flex-1 min-h-0 overflow-auto">{children}</main>
+        <main className="flex-1 min-h-0 overflow-auto"><RoleGate>{children}</RoleGate></main>
       </div>
     </div>
   );

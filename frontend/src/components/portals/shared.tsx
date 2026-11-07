@@ -4,6 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, useCallback } from "react";
 import { PageTitle } from "@/components/shell";
 import { Badge, type Col, DataTable, ErrorBox, Loading, Outcome, Provenance, TokenStatus } from "@/components/ui";
+import { useAuth } from "@/lib/auth";
 import { fmtDate, fmtDateTime, fmtNum, fmtPct, fmtT, fmtTime, siteName } from "@/lib/format";
 
 // The API returns SQLite timestamps without an offset. Rows stamped by the simulated clock hold East Africa Time
@@ -30,10 +31,17 @@ export interface DisputeRow { id: number; created_at: string; fleet_id: number |
 
 export const textareaCls = "w-full px-2 py-1.5 rounded-sm bg-bg-2 border border-line-2 text-ink text-[12px] placeholder:text-ink-3 focus:border-accent outline-none resize-y";
 
+function TokenLink({ id }: { id: string }) {
+  const { has } = useAuth();
+  if (!has("tokens")) return <span className="num text-[11.5px]">{id}</span>;
+  return <Link href={`/tokens?id=${encodeURIComponent(id)}`} className="num text-[11.5px] text-accent hover:underline">{id}</Link>;
+}
+
 export function PortalFrame({ title, sub, note, actions, children }: { title: string; sub?: ReactNode; note?: string; actions?: ReactNode; children: ReactNode }) {
+  const { has } = useAuth();
   return (
     <div className="p-3">
-      <PageTitle title={title} sub={sub} actions={<>{actions}<Link href="/portals" className="text-[12px] text-accent hover:underline">All portals</Link></>} />
+      <PageTitle title={title} sub={sub} actions={<>{actions}{has("portals") && <Link href="/portals" className="text-[12px] text-accent hover:underline">All portals</Link>}</>} />
       {note && (
         <div className="flex items-start gap-2 border border-line bg-bg-2 text-ink-2 text-[11.5px] leading-relaxed rounded-sm px-3 py-2 mb-2">
           <Provenance kind="MOCK" title="Synthetic records and mock adapters" />
@@ -98,7 +106,7 @@ export function TokenTable({ rows, maxH = "300px", empty }: { rows: TokenRow[]; 
       maxH={maxH}
       empty={empty || "No tokens recorded yet."}
       cols={[
-        { key: "id", label: "Token", render: (r) => <Link href={`/tokens?id=${encodeURIComponent(r.token_id)}`} className="num text-[11.5px] text-accent hover:underline">{r.token_id}</Link> },
+        { key: "id", label: "Token", render: (r) => <TokenLink id={r.token_id} /> },
         { key: "status", label: "Status", render: (r) => <TokenStatus value={r.status} /> },
         { key: "plate", label: "Truck", render: (r) => <PlateLink plate={r.tractor_plate} /> },
         { key: "gross", label: "Gross", align: "right", mono: true, render: (r) => fmtT(r.gross_kg) },

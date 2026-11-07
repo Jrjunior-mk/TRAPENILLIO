@@ -3,10 +3,18 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { api, ApiError } from "./api";
 
 export interface Me {
-  id: number; username: string; display_name: string; role: string; role_label: string; org: string; fleet_id: number | null; site_id: string | null; permissions: string[];
+  id: number; username: string; display_name: string; role: string; role_label: string; org: string; fleet_id: number | null; site_id: string | null; permissions: string[]; sections: string[]; home: string;
 }
 
-const Ctx = createContext<{ me: Me | null; offline: boolean; can: (p: string) => boolean; refresh: () => void }>({ me: null, offline: false, can: () => false, refresh: () => {} });
+const Ctx = createContext<{ me: Me | null; offline: boolean; can: (p: string) => boolean; has: (section: string) => boolean; refresh: () => void }>({ me: null, offline: false, can: () => false, has: () => false, refresh: () => {} });
+
+/** The section a path belongs to. The API enforces access, and this keeps the screens consistent with it. */
+export function sectionForPath(path: string): string {
+  const [first, second] = path.split("/").filter(Boolean);
+  if (!first) return "command";
+  if (first === "portals") return second ? `portal:${second}` : "portals";
+  return first;
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
@@ -24,7 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
   };
   useEffect(load, []);
-  return <Ctx.Provider value={{ me, offline, can: (p) => !!me?.permissions.includes(p), refresh: load }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ me, offline, can: (p) => !!me?.permissions.includes(p), has: (s) => !!me?.sections.includes(s), refresh: load }}>{children}</Ctx.Provider>;
 }
 
 export const useAuth = () => useContext(Ctx);

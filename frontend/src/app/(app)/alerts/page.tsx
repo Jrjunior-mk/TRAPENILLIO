@@ -187,14 +187,15 @@ function SecurityPanel() {
 }
 
 function AlertsAudit() {
+  const { can } = useAuth();
   const [tab, setTab] = useTabParam("alerts");
   return (
     <div className="p-3">
       <PageTitle title="Alerts, audit and security" sub="Operational alerts from the simulated corridor, the tamper-evident audit log and the controls behind your session." />
       <div className="grid gap-2 xl:grid-cols-[1fr_300px] items-start">
         <div className="min-w-0">
-          <Tabs tabs={[{ id: "alerts", label: "Alerts" }, { id: "audit", label: "Audit log" }]} value={tab} onChange={setTab} />
-          <div className="mt-2">{tab === "audit" ? <AuditTab /> : <AlertsTab />}</div>
+          {can("audit.view") && <Tabs tabs={[{ id: "alerts", label: "Alerts" }, { id: "audit", label: "Audit log" }]} value={tab} onChange={setTab} />}
+          <div className="mt-2">{tab === "audit" && can("audit.view") ? <AuditTab /> : <AlertsTab />}</div>
         </div>
         <SecurityPanel />
       </div>

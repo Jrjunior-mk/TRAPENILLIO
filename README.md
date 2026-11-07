@@ -69,6 +69,24 @@ cd backend
 pytest
 ```
 
+## Who sees what
+
+Only the administrator sees everything. Every other role lands on its own dashboard and also gets the digital twin. The API enforces this,
+so a refused page cannot be reached by typing its address or calling its route. The rules are in `backend/rcs/security.py`, and `backend/tests/test_roles.py` pins them.
+
+| Role | Dashboard | Also has |
+|---|---|---|
+| Administrator | Command Centre | Everything, including every portal, simulation, the decision engine and the audit log |
+| KeNHA | KeNHA portal | Twin, road and lane clearance, tokens, trucks, verification lane, sensors, alerts outside the port |
+| KPA | KPA portal | Twin, port clearance, tokens, trucks, port alerts |
+| KRA | KRA portal | Twin, tokens, trucks, overload, token and identity alerts |
+| NTSA | NTSA portal | Twin, trucks, identity and fleet alerts |
+| Transporter | Own fleet | Twin (details for its own trucks only), registered fleet, its own tokens |
+| Loading site | Own site | Twin (details for its own site only), origin clearance, tokens from its site, its alerts |
+| Observer | Read-only overview | Twin, analytics |
+
+Actions that affect everyone, such as pausing the simulation, injecting faults or running experiments, are for the administrator.
+
 ## Hosting
 
 **On Vercel (hosted demo).** Two projects from this repository: `frontend` is the site and `backend` is the API, both deploying on push.
