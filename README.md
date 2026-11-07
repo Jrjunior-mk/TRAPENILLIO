@@ -71,17 +71,28 @@ pytest
 
 ## Hosting
 
-Vercel can host the frontend only. The backend runs a continuous simulation engine, a WebSocket stream and worker processes,
-so it needs an always-on host with durable storage. The Docker image in `backend/` is the intended starting point, though Docker has not been run yet.
+**On Vercel (hosted demo).** Two projects from this repository: `frontend` is the site and `backend` is the API, both deploying on push.
 
-1. Host the backend with HTTPS. `render.yaml` does this on Render, generating `RCS_MASTER_KEY` and `RCS_SEED_PASSWORD`. Elsewhere, set those two
-   plus `RCS_ENV=production`, `RCS_COOKIE_SECURE=true` and a PostgreSQL `RCS_DATABASE_URL`.
-2. In the Vercel project, with Root Directory `frontend`, set `API_ORIGIN=https://your-backend` and
-   `NEXT_PUBLIC_WS_URL=wss://your-backend/api/ws/live` and `NEXT_PUBLIC_HIDE_DEMO_LOGINS=1`.
-3. Redeploy, because Next.js reads both at build time.
+| Project | Root directory | Environment variables |
+|---|---|---|
+| Site | `frontend` | `API_ORIGIN`, `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_LIVE_TUNNEL=1`, `NEXT_PUBLIC_HIDE_DEMO_LOGINS=1` |
+| API | `backend` | `RCS_ENV=production`, `RCS_SERVERLESS=true`, `RCS_DATABASE_URL=sqlite:////tmp/rcs.db`, `RCS_MASTER_KEY`, `RCS_SEED_PASSWORD`, `RCS_COOKIE_SECURE=true`, `RCS_LIVE_PREWARM_HOURS=0.25`, `RCS_WORKER_PROCESSES=0` |
 
-In production the seeded accounts use `RCS_SEED_PASSWORD`, and the backend refuses to start seeding without a private value. The password
-is read when the accounts are first created, so changing it later does not change existing accounts.
+Vercel runs short-lived instances that share nothing, and cannot be limited to one. So sessions are signed tokens any instance can verify,
+and each browser tab sends its API calls over its WebSocket, which stays on one instance. That keeps a tab consistent, with these limits:
+
+* **Nothing is permanent.** Data lives on the instance, so operator records and the simulation restart when it is replaced. The app says so when it notices.
+* **Viewers may not share one system.** Two people, or one person in two tabs, can land on different instances with separate simulations.
+* **The simulation only runs while someone is watching**, and pauses when a tab has been hidden for a minute.
+* **Sockets close every 5 minutes** (the plan's limit) and reconnect by themselves. Signing out clears the cookie, but a copied token stays valid until it expires.
+* **Long experiments share one CPU** with the simulation, and free plan quotas apply.
+
+**On an always-on server (one shared, permanent system).** `render.yaml` deploys the backend to Render with PostgreSQL, generating `RCS_MASTER_KEY` and
+`RCS_SEED_PASSWORD`. Elsewhere, set those plus `RCS_ENV=production`, `RCS_COOKIE_SECURE=true` and a PostgreSQL `RCS_DATABASE_URL`. Point `API_ORIGIN` and
+`NEXT_PUBLIC_WS_URL` at it and remove `NEXT_PUBLIC_LIVE_TUNNEL`. This is what a real pilot needs.
+
+Next.js reads `API_ORIGIN` and `NEXT_PUBLIC_*` at build time, so redeploy after changing them. In production the seeded accounts use `RCS_SEED_PASSWORD`,
+and the backend refuses to seed without a private value.
 
 ## A ten-minute demonstration
 

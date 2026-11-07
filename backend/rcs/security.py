@@ -128,7 +128,30 @@ def _aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+def _signing_key() -> bytes:
+    return hashlib.sha256(b"rcs-signed-token-v1" + _master_key()).digest()
+
+
+def sign_token(username: str, purpose: str, seconds: float) -> str:
+    """A token any instance sharing the master key can verify. The purpose stops a ticket being used as a session."""
+    body = base64.urlsafe_b64encode(json.dumps({"u": username, "p": purpose, "exp": utcnow().timestamp() + seconds}).encode()).decode().rstrip("=")  # padding would get the cookie quoted
+    return f"{body}.{hmac.new(_signing_key(), body.encode(), hashlib.sha256).hexdigest()}"
+
+
+def read_token(token: str | None, purpose: str) -> str | None:
+    try:
+        body, signature = (token or "").rsplit(".", 1)
+        if not hmac.compare_digest(signature, hmac.new(_signing_key(), body.encode(), hashlib.sha256).hexdigest()):
+            return None
+        data = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    except (ValueError, TypeError):
+        return None
+    return data["u"] if data.get("p") == purpose and data.get("exp", 0) > utcnow().timestamp() else None
+
+
 def create_session(db: Session, user: User) -> str:
+    if get_settings().serverless:
+        return sign_token(user.username, "session", get_settings().session_hours * 3600)
     token = secrets.token_urlsafe(32)
     now = utcnow()
     db.add(SessionRow(token_hash=hashlib.sha256(token.encode()).hexdigest(), user_id=user.id, created_at=now, expires_at=now + timedelta(hours=get_settings().session_hours)))
@@ -137,6 +160,8 @@ def create_session(db: Session, user: User) -> str:
 
 
 def destroy_session(db: Session, token: str) -> None:
+    if get_settings().serverless:
+        return  # a signed session ends when the cookie is cleared or it expires
     row = db.get(SessionRow, hashlib.sha256(token.encode()).hexdigest())
     if row:
         db.delete(row)
@@ -146,6 +171,10 @@ def destroy_session(db: Session, token: str) -> None:
 def user_from_token(db: Session, token: str | None) -> User | None:
     if not token:
         return None
+    if get_settings().serverless:
+        username = read_token(token, "session")
+        user = db.scalar(select(User).where(User.username == username)) if username else None
+        return user if user and user.active else None
     row = db.get(SessionRow, hashlib.sha256(token.encode()).hexdigest())
     if not row or _aware(row.expires_at) < utcnow():
         return None

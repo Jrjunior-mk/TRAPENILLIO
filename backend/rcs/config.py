@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     live_prewarm_hours: float = 3.0
     worker_processes: int = 2
     seed_demo: bool = True
+    # Function hosts run several short-lived instances that share nothing. Sessions become signed tokens any
+    # instance can verify, and each browser tab sends its API calls through its WebSocket, which stays on one instance.
+    serverless: bool = False
     # Password for the seeded accounts. Required in production, where the published demo password is refused.
     seed_password: str = ""
 

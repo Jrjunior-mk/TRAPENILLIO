@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { tunnelFetch } from "./live";
 
 export class ApiError extends Error {
   status: number;
@@ -25,7 +26,9 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     credentials: "include",
   };
-  let res = await fetch(`/api${path}`, init);
+  // Sign-in and sign-out set the cookie, so they always use HTTP. Everything else may go over the tab's socket.
+  const tunnelled = path.startsWith("/auth/") ? null : await tunnelFetch(init.method!, path, opts.body);
+  let res = tunnelled ?? (await fetch(`/api${path}`, init));
   // A read can safely retry once if the proxy lost its connection to the API.
   if ((res.status === 500 || res.status === 502) && init.method === "GET") res = await fetch(`/api${path}`, init);
   if (res.status === 401 && typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !path.startsWith("/auth/login")) {

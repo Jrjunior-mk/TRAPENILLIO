@@ -2,19 +2,23 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import random
 import secrets
 import time
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..db import get_db, session_factory
 from ..models import User
-from ..security import COOKIE, audit, current_user, require, user_from_token
+from ..security import COOKIE, audit, current_user, read_token, require, sign_token, user_from_token
 from ..services.adapters import adapters
 from ..sim.l1_sensor import edge_pipeline, synth_signal
 from ..sim.network import network_json
@@ -310,10 +314,13 @@ hub = Hub()
 # trades its proxied session for a ticket. Tickets are single use, expire quickly and live in this process.
 WS_TICKET_SECONDS = 30
 _ws_tickets: dict[str, tuple[str, float]] = {}
+INSTANCE = secrets.token_hex(4)
 
 
 @router.post("/ws/ticket", tags=["twin"])
 def ws_ticket(user: User = Depends(current_user)):
+    if get_settings().serverless:  # the socket may reach a different instance than this request
+        return {"ticket": sign_token(user.username, "ws", WS_TICKET_SECONDS), "expires_in": WS_TICKET_SECONDS}
     now = time.monotonic()
     for key, (_, expires) in list(_ws_tickets.items()):
         if expires < now:
@@ -323,12 +330,43 @@ def ws_ticket(user: User = Depends(current_user)):
     return {"ticket": ticket, "expires_in": WS_TICKET_SECONDS}
 
 
+async def tunnel_request(ws: WebSocket, session: str, m: dict) -> None:
+    """Runs one API call on this instance, as the socket's user, and answers over the socket."""
+    reply: dict = {"t": "res", "id": m.get("id")}
+    try:
+        path = str(m["path"])
+        if not path.startswith("/") or path.startswith("//"):
+            raise ValueError("bad path")
+        transport = httpx.ASGITransport(app=ws.scope["app"], raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://tunnel", timeout=120) as client:
+            res = await client.request(str(m["method"]), "/api" + path, json=m.get("body"), headers={"cookie": f"{COOKIE}={session}"})
+        content_type = res.headers.get("content-type", "")
+        reply.update(status=res.status_code, type=content_type, disposition=res.headers.get("content-disposition"))
+        if content_type.startswith(("application/json", "text/")):
+            reply["body"] = res.text
+        else:
+            reply["b64"] = base64.b64encode(res.content).decode()
+    except Exception:  # noqa: BLE001
+        log.exception("tunnelled request failed")
+        reply.update(status=500, type="application/json", body='{"detail":"The request failed on the server."}')
+    try:
+        await ws.send_text(json.dumps(reply))
+    except Exception:  # noqa: BLE001
+        pass  # the socket closed first, and the browser retries over HTTP
+
+
 @router.websocket("/ws/live")
 async def ws_live(ws: WebSocket):
     Session_ = session_factory()
+    serverless = get_settings().serverless
     ticket = ws.query_params.get("ticket")
     with Session_() as db:
-        if ticket:
+        if ticket and serverless:
+            username = read_token(ticket, "ws")
+            user = db.scalar(select(User).where(User.username == username)) if username else None
+            if user is not None and not user.active:
+                user = None
+        elif ticket:
             entry = _ws_tickets.pop(ticket, None)
             user = db.get(User, entry[0]) if entry and entry[1] >= time.monotonic() else None
             if user is not None and not user.active:
@@ -340,11 +378,21 @@ async def ws_live(ws: WebSocket):
         return
     await ws.accept()
     hub.clients.add(ws)
+    session = sign_token(user.username, "session", 3600) if serverless else None
+    pending: set[asyncio.Task] = set()
     try:
+        if serverless:
+            await ws.send_text(json.dumps({"t": "hello", "instance": INSTANCE}))
         await ws.send_text(json.dumps(engine().kpi(), default=str))
         while True:
-            await ws.receive_text()
-    except WebSocketDisconnect:
+            text = await ws.receive_text()
+            if session:
+                m = json.loads(text)
+                if m.get("t") == "req":
+                    task = asyncio.create_task(tunnel_request(ws, session, m))
+                    pending.add(task)
+                    task.add_done_callback(pending.discard)
+    except (WebSocketDisconnect, ValueError):
         pass
     finally:
         hub.clients.discard(ws)
@@ -363,7 +411,8 @@ async def simulation_loop() -> None:
         wall = min(t - last, 0.5)
         last = t
         try:
-            if e.running and not e.paused:
+            # An idle function instance should not spend CPU: the simulation advances while someone is watching.
+            if e.running and not e.paused and (hub.clients or not get_settings().serverless):
                 await asyncio.to_thread(e.step, wall * e.speed)
             n += 1
             if hub.clients:

@@ -37,8 +37,10 @@ export interface LiveAlert {
 interface LiveState {
   connected: boolean;
   kpi: Kpi | null;
-  /** True once a connection has failed or dropped. Before that, a closed socket only means it is still connecting. */
+  /** True once a connection has failed or stayed down. Before that, a closed socket only means it is still connecting. */
   lost: boolean;
+  /** On function hosting, the tab reconnected to a different instance, whose simulation and records are separate. */
+  instanceChanged: boolean;
   events: LiveEvent[];
   alerts: LiveAlert[];
   unread: number;
@@ -52,6 +54,7 @@ const frameRef: LiveState["frameRef"] = { current: null, prev: null, at: 0 };
 export const useLive = create<LiveState>((set) => ({
   connected: false,
   lost: false,
+  instanceChanged: false,
   kpi: null,
   events: [],
   alerts: [],
@@ -64,6 +67,87 @@ let socket: WebSocket | null = null;
 let retry: ReturnType<typeof setTimeout> | null = null;
 let wanted = false;
 let connecting = false;
+
+// Function hosting runs several instances that share nothing, and a socket stays on one of them. Sending this tab's
+// API calls over its socket keeps everything it sees on the same instance.
+const TUNNEL = !!process.env.NEXT_PUBLIC_LIVE_TUNNEL;
+const STAY_CONNECTED_WHEN_HIDDEN_MS = 60000;
+let instance: string | null = null;
+let nextRequest = 1;
+type TunnelReply = { status: number; type?: string; body?: string; b64?: string; disposition?: string | null };
+const pending = new Map<number, (reply: TunnelReply | null) => void>();
+let lostTimer: ReturnType<typeof setTimeout> | null = null;
+
+function failPending() {
+  for (const resolve of pending.values()) resolve(null);
+  pending.clear();
+}
+
+async function socketOpen(waitMs: number): Promise<WebSocket | null> {
+  void connectLive();
+  const until = Date.now() + waitMs;
+  while (Date.now() < until) {
+    if (socket?.readyState === WebSocket.OPEN) return socket;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return null;
+}
+
+/** Sends an API call over the socket. Null means the caller should fall back to plain HTTP. */
+export async function tunnelFetch(method: string, path: string, body?: unknown): Promise<Response | null> {
+  if (!TUNNEL || typeof window === "undefined") return null;
+  const ws = await socketOpen(20000);
+  if (!ws) return null;
+  const id = nextRequest++;
+  const reply = await new Promise<TunnelReply | null>((resolve) => {
+    pending.set(id, resolve);
+    ws.send(JSON.stringify({ t: "req", id, method, path, body }));
+    setTimeout(() => {
+      if (pending.delete(id)) resolve(null);
+    }, 120000);
+  });
+  if (!reply) return null;
+  const headers: Record<string, string> = { "content-type": reply.type || "application/json" };
+  if (reply.disposition) headers["content-disposition"] = reply.disposition;
+  const data = reply.b64 ? Uint8Array.from(atob(reply.b64), (c) => c.charCodeAt(0)) : reply.body ?? "";
+  return new Response(reply.status === 204 ? null : data, { status: reply.status, headers });
+}
+
+function installTunnelBrowserHooks() {
+  // Plain links to the API (CSV, PDF and key downloads) would reach some other instance.
+  document.addEventListener("click", async (e) => {
+    const a = (e.target as Element | null)?.closest?.("a[href^='/api/']") as HTMLAnchorElement | null;
+    if (!a) return;
+    e.preventDefault();
+    const res = await tunnelFetch("GET", a.getAttribute("href")!.slice(4));
+    if (!res || !res.ok) {
+      window.open(a.href, "_blank");
+      return;
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const name = res.headers.get("content-disposition")?.match(/filename="?([^";]+)/)?.[1];
+    if (name) {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      link.click();
+    } else {
+      window.open(url, "_blank");
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  });
+  // A connection left open in a background tab keeps a function instance running and uses up the plan's quota.
+  let hiddenTimer: ReturnType<typeof setTimeout> | null = null;
+  document.addEventListener("visibilitychange", () => {
+    if (hiddenTimer) clearTimeout(hiddenTimer);
+    if (document.hidden) {
+      hiddenTimer = setTimeout(disconnectLive, STAY_CONNECTED_WHEN_HIDDEN_MS);
+    } else if (!socket) {
+      void connectLive();
+    }
+  });
+}
+let hooksInstalled = false;
 
 function scheduleReconnect() {
   if (retry) clearTimeout(retry);
@@ -85,6 +169,10 @@ async function liveUrl(): Promise<string | null> {
 
 export async function connectLive() {
   if (typeof window === "undefined" || socket || connecting) return;
+  if (TUNNEL && !hooksInstalled) {
+    hooksInstalled = true;
+    installTunnelBrowserHooks();
+  }
   wanted = true;
   connecting = true;
   let url: string | null = null;
@@ -104,16 +192,31 @@ export async function connectLive() {
   if (!wanted || socket) return;
   const ws = new WebSocket(url);
   socket = ws;
-  ws.onopen = () => useLive.setState({ connected: true, lost: false });
+  ws.onopen = () => {
+    if (lostTimer) clearTimeout(lostTimer);
+    useLive.setState({ connected: true, lost: false });
+  };
   ws.onclose = () => {
     socket = null;
-    useLive.setState({ connected: false, lost: true });
+    failPending();
+    useLive.setState({ connected: false });
+    // Function hosting closes sockets on a schedule and the tab reconnects at once, so only a lasting outage is reported.
+    if (lostTimer) clearTimeout(lostTimer);
+    lostTimer = setTimeout(() => {
+      if (wanted) useLive.setState({ lost: true });
+    }, TUNNEL ? 8000 : 0);
     scheduleReconnect();
   };
   ws.onerror = () => ws.close();
   ws.onmessage = (msg) => {
     const m = JSON.parse(msg.data);
-    if (m.t === "frame") {
+    if (m.t === "res") {
+      pending.get(m.id)?.(m);
+      pending.delete(m.id);
+    } else if (m.t === "hello") {
+      if (instance && instance !== m.instance) useLive.setState({ instanceChanged: true });
+      instance = m.instance;
+    } else if (m.t === "frame") {
       frameRef.prev = frameRef.current;
       frameRef.current = m;
       frameRef.at = performance.now();

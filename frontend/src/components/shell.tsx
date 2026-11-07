@@ -221,6 +221,17 @@ function BackendOffline() {
   );
 }
 
+function InstanceNotice() {
+  const changed = useLive((s) => s.instanceChanged);
+  if (!changed) return null;
+  return (
+    <div role="status" className="shrink-0 flex items-center gap-3 px-3 py-1.5 border-b border-wait/40 text-wait text-[12px]">
+      This hosted demo moved to a new server instance, so the simulation restarted and any records you added here are gone.
+      <button onClick={() => useLive.setState({ instanceChanged: false })} className="ml-auto underline cursor-pointer">Dismiss</button>
+    </div>
+  );
+}
+
 function ShellFrame({ collapsed, onToggle, children }: { collapsed: boolean; onToggle: () => void; children: ReactNode }) {
   const { offline } = useAuth();
   if (offline) return <BackendOffline />;
@@ -229,6 +240,7 @@ function ShellFrame({ collapsed, onToggle, children }: { collapsed: boolean; onT
       <Sidebar collapsed={collapsed} onToggle={onToggle} />
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar />
+        <InstanceNotice />
         <main className="flex-1 min-h-0 overflow-auto">{children}</main>
       </div>
     </div>
